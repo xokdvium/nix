@@ -13,6 +13,7 @@
 #include <brotli/encode.h>
 
 #include <iostream>
+#include <sstream>
 
 namespace nix {
 
@@ -53,7 +54,9 @@ struct ArchiveDecompressionSource : Source
             this->archive->check(archive_read_next_header(this->archive->archive, &ae), "failed to read header (%s)");
             warn("(do not miss me): archive filter count: %d", archive_filter_count(this->archive->archive));
             if (archive_filter_count(this->archive->archive) < 2) {
-                throw CompressionError("input compression not recognized");
+                std::stringstream ss;
+                ss << "input compression not recognized: " << archive_filter_count(this->archive->archive);
+                throw CompressionError(ss.str());
             }
         }
         ssize_t result = archive_read_data(this->archive->archive, data, len);
