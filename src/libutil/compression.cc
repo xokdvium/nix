@@ -53,7 +53,7 @@ struct ArchiveDecompressionSource : Source
             archive = std::make_unique<TarArchive>(src, true);
             this->archive->check(archive_read_next_header(this->archive->archive, &ae), "failed to read header (%s)");
             warn("(do not miss me): archive filter count: %d", archive_filter_count(this->archive->archive));
-            if (archive_filter_count(this->archive->archive) < 1) {
+            if (archive_filter_count(this->archive->archive) < 2) {
                 std::stringstream ss;
                 ss << "input compression not recognized: " << archive_filter_count(this->archive->archive);
                 throw CompressionError(ss.str());
