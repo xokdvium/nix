@@ -63,6 +63,7 @@ struct ArchiveDecompressionSource : Source
         if (result > 0)
             return result;
         if (result == 0) {
+            warn("(do not miss me): reached eof of compressed file");
             throw EndOfFile("reached end of compressed file");
         }
         this->archive->check(result, "failed to read compressed data (%s)");
@@ -219,6 +220,7 @@ std::string decompress(const std::string & method, std::string_view in)
 
 std::unique_ptr<FinishSink> makeDecompressionSink(const std::string & method, Sink & nextSink)
 {
+    printMsg(lvlVomit, "(do not miss me): creating decompress sink with encoding: %s", method);
     if (method == "none" || method == "")
         return std::make_unique<NoneSink>(nextSink);
     else if (method == "br")

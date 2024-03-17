@@ -161,12 +161,11 @@ struct curlFileTransfer : public FileTransfer
         size_t writeCallback(void * contents, size_t size, size_t nmemb)
         {
             try {
-                printMsg(lvlVomit, "(do not miss me): got num bytes %d", nmemb);
+                printMsg(lvlVomit, "(do not miss me): got num bytes %d for %s", nmemb, request.uri.c_str());
                 size_t realSize = size * nmemb;
                 result.bodySize += realSize;
 
                 if (!decompressionSink) {
-                    printMsg(lvlVomit, "(do not miss me): creating decompress sink with encoding: %s", encoding);
                     decompressionSink = makeDecompressionSink(encoding, finalSink);
                     if (!successfulStatuses.count(getHTTPStatus())) {
                         // In this case we want to construct a TeeSink, to keep
