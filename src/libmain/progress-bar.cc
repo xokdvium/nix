@@ -73,13 +73,8 @@ private:
         uint64_t corruptedPaths = 0, untrustedPaths = 0;
 
         bool active = true;
-        size_t suspensions = 0;
+        bool paused = false;
         bool haveUpdate = true;
-
-        bool isPaused() const
-        {
-            return suspensions > 0;
-        }
     };
 
     /** Helps avoid unnecessary redraws, see `redraw()` */
@@ -135,30 +130,18 @@ public:
 
     void pause() override {
         auto state (state_.lock());
-        state->suspensions++;
-        if (state->suspensions > 1) {
-            // already paused
-            return;
-        }
-
+        state->paused = true;
         if (state->active)
             writeToStderr("\r\e[K");
     }
 
     void resume() override {
         auto state (state_.lock());
-        if (state->suspensions == 0) {
-            log(lvlError, "nix::ProgressBar: resume() called without a matching preceding pause(). This is a bug.");
-            return;
-        } else {
-            state->suspensions--;
-        }
-        if (state->suspensions == 0) {
-            if (state->active)
-                writeToStderr("\r\e[K");
-            state->haveUpdate = true;
-            updateCV.notify_one();
-        }
+        state->paused = false;
+        if (state->active)
+            writeToStderr("\r\e[K");
+        state->haveUpdate = true;
+        updateCV.notify_one();
     }
 
     bool isVerbose() override
@@ -400,7 +383,7 @@ public:
         auto nextWakeup = std::chrono::milliseconds::max();
 
         state.haveUpdate = false;
-        if (state.isPaused() || !state.active) return nextWakeup;
+        if (state.paused || !state.active) return nextWakeup;
 
         std::string line;
 

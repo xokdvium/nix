@@ -312,7 +312,11 @@ void runProgram2(const RunOptions & options)
     // TODO: Implement shebang / program interpreter lookup on Windows
     auto interpreter = getProgramInterpreter(realProgram);
 
-    auto suspension = logger->suspendIf(options.isInteractive);
+    std::optional<Finally<std::function<void()>>> resumeLoggerDefer;
+    if (options.isInteractive) {
+        logger->pause();
+        resumeLoggerDefer.emplace([]() { logger->resume(); });
+    }
 
     Pid pid = spawnProcess(interpreter.has_value() ? *interpreter : realProgram, options, out, in);
 
