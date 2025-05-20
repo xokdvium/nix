@@ -25,6 +25,7 @@
 
 #include <algorithm>
 #include <iostream>
+#include <queue>
 #include <sstream>
 #include <cstring>
 #include <optional>
@@ -1965,12 +1966,94 @@ void ExprOpUpdate::eval(EvalState & state, Env & env, Value & v)
 
     evalForUpdate(state, env, q);
 
-    v.mkAttrs(&state.emptyBindings);
-    for (auto it = q.rbegin(), end = q.rend(); it != end; ++it) {
-        auto rhs = *it;
+    if (q.size() == 2) {
         /* Remember that queue is sorted rightmost attrset first. */
-        eval(state, v, v, rhs);
+        auto rhs = q[0];
+        auto lhs = q[1];
+        eval(state, v, lhs, rhs);
+        return;
     }
+
+    if (q.size() < 8) {
+        v.mkAttrs(&state.emptyBindings);
+        for (auto it = q.rbegin(), end = q.rend(); it != end; ++it) {
+            auto rhs = *it;
+            eval(state, v, v, rhs);
+        }
+        return;
+    }
+
+    struct BindingsCursor
+    {
+        Bindings::const_iterator current, end;
+        /** Priority of the value. Lesser values have more priority (i.e. they are
+            more right leaning). */
+        uint32_t priority;
+
+        const Attr & get() const noexcept
+        {
+            return *current;
+        }
+
+        bool empty() const noexcept
+        {
+            return current == end;
+        }
+
+        void increment()
+        {
+            ++current;
+        }
+
+        void consume(Symbol name) noexcept
+        {
+            while (!empty() && current->name <= name)
+                ++current;
+        }
+
+        GENERATE_CMP(BindingsCursor, me->current->name, me->priority)
+    };
+
+    using QueueStorageType = SmallVector<BindingsCursor, 64>;
+    using PriorityQueue = std::priority_queue<BindingsCursor, QueueStorageType, std::greater<BindingsCursor>>;
+    auto storage = QueueStorageType();
+    storage.reserve(q.size());
+    PriorityQueue cursorHeap(std::greater<BindingsCursor>(), std::move(storage));
+    Bindings::size_t capacity = 0;
+    for (auto && [i, vCur] : enumerate(q)) {
+        const auto * attrs = vCur.attrs();
+        if (attrs->empty())
+            continue;
+
+        cursorHeap.emplace(attrs->begin(), attrs->end(), i);
+        capacity += attrs->size();
+    }
+
+    auto attrs = state.buildBindings(capacity);
+    /* The last inserted name, so that we can easily ignore all the values that
+       aren't right-most in the sequence of `//` operations. Symbol() is a _null
+       object_ that doesn't match any real symbols. */
+    Symbol lastInsertedName;
+    while (!cursorHeap.empty()) {
+        auto toInsert = cursorHeap.top();
+        cursorHeap.pop();
+
+        auto attr = toInsert.get();
+        if (attr.name > lastInsertedName) {
+            lastInsertedName = attr.name;
+            attrs.insert(attr);
+            toInsert.increment();
+            if (!toInsert.empty())
+                cursorHeap.push(toInsert);
+            continue;
+        }
+
+        toInsert.consume(lastInsertedName);
+        if (!toInsert.empty())
+            cursorHeap.push(toInsert);
+    }
+
+    v.mkAttrs(attrs.alreadySorted());
 }
 
 void Expr::evalForUpdate(EvalState & state, Env & env, UpdateQueue & q, std::string_view errorCtx)
