@@ -1927,13 +1927,7 @@ void ExprOpImpl::eval(EvalState & state, Env & env, Value & v)
     v.mkBool(!state.evalBool(env, e1, pos, "in the left operand of the IMPL (->) operator") || state.evalBool(env, e2, pos, "in the right operand of the IMPL (->) operator"));
 }
 
-
-void ExprOpUpdate::eval(EvalState & state, Env & env, Value & v)
-{
-    Value v1, v2;
-    state.evalAttrs(env, e1, v1, pos, "in the left operand of the update (//) operator");
-    state.evalAttrs(env, e2, v2, pos, "in the right operand of the update (//) operator");
-
+void ExprOpUpdate::eval(EvalState & state, Value & v, Value & v1, Value & v2) {
     state.nrOpUpdates++;
 
     if (v1.attrs()->size() == 0) { v = v2; return; }
@@ -1965,6 +1959,41 @@ void ExprOpUpdate::eval(EvalState & state, Env & env, Value & v)
     state.nrOpUpdateValuesCopied += v.attrs()->size();
 }
 
+void ExprOpUpdate::eval(EvalState & state, Env & env, Value & v)
+{
+    UpdateQueue q;
+
+    evalForUpdate(state, env, q);
+
+    v.mkAttrs(&state.emptyBindings);
+    for (auto it = q.rbegin(), end = q.rend(); it != end; ++it) {
+        auto rhs = *it;
+        /* Remember that queue is sorted rightmost attrset first. */
+        eval(state, v, v, rhs);
+    }
+}
+
+void Expr::evalForUpdate(EvalState & state, Env & env, UpdateQueue & q, std::string_view errorCtx)
+{
+    Value vTmp;
+    state.evalAttrs(env, this, vTmp, getPos(), errorCtx);
+    /* .attrs() returns a pointer to immutable attrset, but Value constructor
+        expects a mutable pointer. */
+    q.push_back(vTmp);
+}
+
+void ExprOpUpdate::evalForUpdate(EvalState & state, Env & env, UpdateQueue & q)
+{
+    /* Output rightmost attrset first to the merge queue as the one
+       with the most priority. */
+    e2->evalForUpdate(state, env, q, "in the right operand of the update (//) operator");
+    e1->evalForUpdate(state, env, q, "in the left operand of the update (//) operator");
+}
+
+void ExprOpUpdate::evalForUpdate(EvalState & state, Env & env, UpdateQueue & q, std::string_view errorCtx)
+{
+    evalForUpdate(state, env, q);
+}
 
 void ExprOpConcatLists::eval(EvalState & state, Env & env, Value & v)
 {
