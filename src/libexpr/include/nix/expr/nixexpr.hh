@@ -419,7 +419,7 @@ struct ExprOpNot : Expr
     COMMON_METHODS
 };
 
-#define MakeBinOpMember(name, s)                                                         \
+#define MakeBinOpMembers(name, s)                                                         \
     PosIdx pos;                                                                          \
     Expr *e1, *e2;                                                                       \
     name(Expr * e1, Expr * e2)                                                           \
@@ -451,7 +451,7 @@ struct ExprOpNot : Expr
 #define MakeBinOp(name, s)       \
     struct name : Expr           \
     {                            \
-        MakeBinOpMember(name, s) \
+        MakeBinOpMembers(name, s) \
     };
 
 MakeBinOp(ExprOpEq, "==")
@@ -459,8 +459,12 @@ MakeBinOp(ExprOpNEq, "!=")
 MakeBinOp(ExprOpAnd, "&&")
 MakeBinOp(ExprOpOr, "||")
 MakeBinOp(ExprOpImpl, "->")
-MakeBinOp(ExprOpUpdate, "//")
 MakeBinOp(ExprOpConcatLists, "++")
+
+struct ExprOpUpdate : Expr
+{
+    MakeBinOpMembers(ExprOpUpdate, "//")
+};
 
 struct ExprConcatStrings : Expr
 {
