@@ -1,6 +1,21 @@
 #!/usr/bin/env bash
 set -euo pipefail
+
+# This script is supposed to be run in Github Actions CI.
+# It builds all flake checks attributes for the current system
+# in a sequential manner (though the underlying builds are parallel)
+# while grouping the log lines in collapsible sections.
+
 system=$(nix eval --raw --impure --expr builtins.currentSystem)
-nix eval --json ".#checks.$system" --apply builtins.attrNames | \
-  jq -r '.[]' | \
-  xargs -P0 -I '{}' sh -c "nix build -L .#checks.$system.{} || { echo 'FAILED: \033[0;31mnix build -L .#checks.$system.{}\\033[0m'; kill 0; }"
+all_checks=$(nix eval --json ".#checks.$system" --apply builtins.attrNames | jq -r '.[]')
+
+for check in $all_checks; do
+    check_attrpath="checks.$system.$check"
+    # https://docs.github.com/en/actions/reference/workflow-commands-for-github-actions#grouping-log-lines
+    echo "::group::{$check_attrpath}"
+    if ! nix build -L ".#$check_attrpath"; then
+        echo "::error title=Check failed::$check_attrpath"
+        exit 1
+    fi
+    echo "::endgroup::"
+done
