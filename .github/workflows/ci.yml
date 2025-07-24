@@ -15,7 +15,7 @@ jobs:
         fetch-depth: 0
     - uses: ./.github/actions/install-nix-action
       with:
-        dogfood: true
+        dogfood: false
         extra_nix_config:
           experimental-features = nix-command flakes
         github_token: ${{ secrets.GITHUB_TOKEN }}
