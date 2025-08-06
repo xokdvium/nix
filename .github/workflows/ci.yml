@@ -85,7 +85,7 @@ jobs:
     - name: Upload coverage reports
       uses: actions/upload-artifact@v4
       with:
-        name: coverage-reports
+        name: coverage-reports-${{ matrix.os }}
         path: coverage-reports/
       if: ${{ matrix.instrumented }}
     - name: Upload installer tarball
@@ -94,6 +94,24 @@ jobs:
         name: installer-${{matrix.os}}
         path: out/*
       if: ${{ matrix.primary }}
+
+  upload_tests_code_coverage:
+    runs-on: ubuntu-24.04
+    needs: [tests]
+    name: upload code coverage to codecov
+    steps:
+    - uses: actions/checkout@v4
+    - name: Download All Artifacts
+      uses: actions/download-artifact@v4
+      with:
+        path: ./.
+        pattern: coverage-reports-*
+        merge-multiple: false
+    - uses: codecov/codecov-action@v5
+      with:
+        fail_ci_if_error: true
+        files: ./coverage-reports-linux/coverage.info
+        token: ${{ secrets.CODECOV_TOKEN }}
 
   installer_test:
     needs: [tests]
