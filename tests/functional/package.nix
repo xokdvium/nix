@@ -68,7 +68,7 @@ mkMesonDerivation (
     ];
 
     nativeBuildInputs = finalAttrs.passthru.externalNativeBuildInputs ++ [
-      nix-cli
+      (nix-cli.__spliced.hostHost or nix-cli)
     ];
 
     buildInputs = [
