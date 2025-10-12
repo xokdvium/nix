@@ -1,0 +1,21 @@
+name: "test"
+
+on:
+  push:
+    branches:
+      - asan-hydra-test
+
+permissions: read-all
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+    - uses: actions/checkout@v5
+      with:
+        fetch-depth: 0
+    - uses: ./.github/actions/install-nix-action
+      with:
+        dogfood: true
+        github_token: ${{ secrets.GITHUB_TOKEN }}
+    - run: nix build .#hydraJobs.buildWithSanitizers.nix-everything.aarch64-darwin -L
