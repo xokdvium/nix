@@ -78,6 +78,8 @@ public:
         return trackLastModified ? std::optional{mtime} : std::nullopt;
     }
 
+    static Stat makeStat(const struct ::stat st);
+
 private:
 
     /**
