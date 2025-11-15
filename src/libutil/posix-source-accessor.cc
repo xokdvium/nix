@@ -55,29 +55,7 @@ void PosixSourceAccessor::readFile(const CanonPath & path, Sink & sink, std::fun
     if (!fd)
         throw SysError("opening file '%1%'", ap.string());
 
-    struct stat st;
-    if (fstat(fromDescriptorReadOnly(fd.get()), &st) == -1)
-        throw SysError("statting file");
-
-    sizeCallback(st.st_size);
-
-    off_t left = st.st_size;
-
-    std::array<unsigned char, 64 * 1024> buf;
-    while (left) {
-        checkInterrupt();
-        ssize_t rd = read(fromDescriptorReadOnly(fd.get()), buf.data(), (size_t) std::min(left, (off_t) buf.size()));
-        if (rd == -1) {
-            if (errno != EINTR)
-                throw SysError("reading from file '%s'", showPath(path));
-        } else if (rd == 0)
-            throw SysError("unexpected end-of-file reading '%s'", showPath(path));
-        else {
-            assert(rd <= left);
-            sink({(char *) buf.data(), (size_t) rd});
-            left -= rd;
-        }
-    }
+    readFile(fd.get(), sink, sizeCallback, [&]() { return showPath(path); });
 }
 
 bool PosixSourceAccessor::pathExists(const CanonPath & path)
@@ -216,6 +194,37 @@ PosixSourceAccessor::Stat PosixSourceAccessor::makeStat(const struct ::stat st)
         .fileSize = S_ISREG(st.st_mode) ? std::optional<uint64_t>(st.st_size) : std::nullopt,
         .isExecutable = S_ISREG(st.st_mode) && st.st_mode & S_IXUSR,
     };
+}
+
+void PosixSourceAccessor::readFile(
+    Descriptor fd,
+    Sink & sink,
+    std::function<void(uint64_t)> sizeCallback,
+    std::function<std::string()> makePathStringForError)
+{
+    struct stat st;
+    if (fstat(fromDescriptorReadOnly(fd), &st) == -1)
+        throw SysError("statting file");
+
+    sizeCallback(st.st_size);
+
+    off_t left = st.st_size;
+
+    std::array<unsigned char, 64 * 1024> buf;
+    while (left) {
+        checkInterrupt();
+        ssize_t rd = read(fromDescriptorReadOnly(fd), buf.data(), (size_t) std::min(left, (off_t) buf.size()));
+        if (rd == -1) {
+            if (errno != EINTR)
+                throw SysError("reading from file '%s'", makePathStringForError());
+        } else if (rd == 0)
+            throw SysError("unexpected end-of-file reading '%s'", makePathStringForError());
+        else {
+            assert(rd <= left);
+            sink({(char *) buf.data(), (size_t) rd});
+            left -= rd;
+        }
+    }
 }
 
 ref<SourceAccessor> getFSSourceAccessor()

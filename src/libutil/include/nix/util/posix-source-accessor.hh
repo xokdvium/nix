@@ -80,6 +80,15 @@ public:
 
     static Stat makeStat(const struct ::stat st);
 
+    /**
+     * Call sizeCallback with file size and drain the descriptor to a sink.
+     */
+    static void readFile(
+        Descriptor fd,
+        Sink & sink,
+        std::function<void(uint64_t)> sizeCallback,
+        std::function<std::string()> makePathStringForError);
+
 private:
 
     /**
