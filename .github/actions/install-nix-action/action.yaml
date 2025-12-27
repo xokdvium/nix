@@ -24,9 +24,17 @@ inputs:
     description: "Github token"
     required: true
   use_cache:
-    description: "Whether to setup magic-nix-cache"
+    description: "Whether to setup cache-nix-action"
     default: true
     required: false
+  save_cache:
+    description: "Whether to save Nix Store via cache-nix-action"
+    default: false
+    required: false
+  cache_key_suffix:
+    description: "Suffix for cache key used by cache-nix-action"
+    required: false
+    default: "default"
 runs:
   using: "composite"
   steps:
@@ -112,7 +120,10 @@ runs:
         # Ternary operator in GHA: https://www.github.com/actions/runner/issues/409#issuecomment-752775072
         install_url: ${{ inputs.dogfood == 'true' && format('{0}/install', steps.download-nix-installer.outputs.installer-path) || inputs.install_url }}
         install_options: ${{ inputs.dogfood == 'true' && format('--tarball-url-prefix {0}', steps.download-nix-installer.outputs.installer-path) || '' }}
-        extra_nix_config: ${{ inputs.extra_nix_config }}
+        extra_nix_config: |
+          keep-env-derivations = true
+          keep-outputs = true
+          ${{ inputs.extra_nix_config }}
     - uses: DeterminateSystems/nix-installer-action@786fff0690178f1234e4e1fe9b536e94f5433196 # v20
       if: ${{ inputs.experimental-installer == 'true' }}
       with:
@@ -121,11 +132,21 @@ runs:
         local-root: ${{ inputs.experimental-installer-version == 'latest' && steps.download-latest-experimental-installer.outputs.installer-path || '' }}
         source-url: ${{ inputs.experimental-installer-version != 'latest' && 'https://artifacts.nixos.org/experimental-installer/tag/${{ inputs.experimental-installer-version }}/${{ env.EXPERIMENTAL_INSTALLER_ARTIFACT }}' || '' }}
         nix-package-url: ${{ inputs.dogfood == 'true' && steps.download-nix-installer.outputs.tarball-path || (inputs.tarball_url || '') }}
-        extra-conf: ${{ inputs.extra_nix_config }}
-    - uses: DeterminateSystems/magic-nix-cache-action@565684385bcd71bad329742eefe8d12f2e765b39 # v13
+        extra-conf: |
+          keep-env-derivations = true
+          keep-outputs = true
+          ${{ inputs.extra_nix_config }}
+    - uses: nix-community/cache-nix-action@28fe566bcd45624cf224a183d89f1bdd6758c741 # main
       if: ${{ inputs.use_cache == 'true' }}
       with:
-        diagnostic-endpoint: ''
-        use-flakehub: false
-        use-gha-cache: true
-        source-revision: 92d9581367be2233c2d5714a2640e1339f4087d8 # main
+        primary-key: nix-${{ runner.os }}-${{ runner.arch }}-${{ inputs.cache_key_suffix }}-${{ github.run_id }}
+        restore-prefixes-first-match: |
+          nix-${{ runner.os }}-${{ runner.arch }}-${{ inputs.cache_key_suffix }}-
+        gc-max-store-size-linux: 1G
+        gc-max-store-size-macos: 1G
+        save: ${{ inputs.save_cache }}
+        purge: ${{ inputs.save_cache }}
+        purge-prefixes: |
+          nix-${{ runner.os }}-${{ runner.arch }}-${{ inputs.cache_key_suffix }}-
+        purge-created: 0
+        purge-primary-key: never

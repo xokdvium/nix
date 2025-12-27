@@ -6,6 +6,7 @@ on:
   push:
     branches:
       - master
+      - ci-nix-cache-action
   workflow_dispatch:
     inputs:
       dogfood:
@@ -18,7 +19,10 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
-permissions: read-all
+permissions:
+  contents: read
+  actions: write # For cache-nix-action to purge actions caches
+  pull-requests: read
 
 jobs:
   eval:
@@ -33,7 +37,9 @@ jobs:
         extra_nix_config:
           experimental-features = nix-command flakes
         github_token: ${{ secrets.GITHUB_TOKEN }}
-        use_cache: false
+        use_cache: true
+        save_cache: true
+        cache_key_suffix: "eval"
     - run: nix flake show --all-systems --json
 
   pre-commit-checks:
@@ -46,6 +52,9 @@ jobs:
           dogfood: ${{ github.event_name == 'workflow_dispatch' && inputs.dogfood || github.event_name != 'workflow_dispatch' }}
           extra_nix_config: experimental-features = nix-command flakes
           github_token: ${{ secrets.GITHUB_TOKEN }}
+          use_cache: true
+          save_cache: false
+          cache_key_suffix: "tests" # Reuse the cache from the tests job
       - run: ./ci/gha/tests/pre-commit-checks
 
   basic-checks:
@@ -96,6 +105,9 @@ jobs:
         dogfood: ${{ github.event_name == 'workflow_dispatch' && inputs.dogfood || github.event_name != 'workflow_dispatch' }}
         # The sandbox would otherwise be disabled by default on Darwin
         extra_nix_config: "sandbox = true"
+        use_cache: true
+        save_cache: true
+        cache_key_suffix: ${{ matrix.instrumented && 'instrumented' || 'tests' }}
     # Since ubuntu 22.30, unprivileged usernamespaces are no longer allowed to map to the root user:
     # https://ubuntu.com/blog/ubuntu-23-10-restricted-unprivileged-user-namespaces
     - run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
@@ -183,6 +195,7 @@ jobs:
       if: ${{ matrix.experimental-installer }}
       with:
         dogfood: false
+        use_cache: false
         experimental-installer: true
         tarball_url: ${{ steps.installer-tarball-url.outputs.tarball-path }}
         github_token: ${{ secrets.GITHUB_TOKEN }}
@@ -216,6 +229,7 @@ jobs:
         run: |
           echo "docker=${{ env._DOCKER_SECRETS != '' }}" >> $GITHUB_OUTPUT
 
+  # FIXME: Move into a separate workflow.
   docker_push_image:
     needs: [tests, check_secrets]
     permissions:
@@ -233,6 +247,8 @@ jobs:
     - uses: ./.github/actions/install-nix-action
       with:
         dogfood: false
+        use_cache: true
+        cache_key_suffix: tests
         extra_nix_config: |
           experimental-features = flakes nix-command
     - run: echo NIX_VERSION="$(nix eval .\#nix.version | tr -d \")" >> $GITHUB_ENV
@@ -293,8 +309,12 @@ jobs:
           extra_nix_config:
             experimental-features = nix-command flakes
           github_token: ${{ secrets.GITHUB_TOKEN }}
+          use_cache: true
+          save_cache: false
+          cache_key_suffix: tests
       - run: nix build -L --out-link ./new-nix && PATH=$(pwd)/new-nix/bin:$PATH MAX_FLAKES=25 flake-regressions/eval-all.sh
 
+  # FIXME: Move into a separate workflow.
   profile_build:
     needs: tests
     runs-on: ubuntu-24.04
@@ -313,6 +333,7 @@ jobs:
         extra_nix_config: |
           experimental-features = flakes nix-command ca-derivations impure-derivations
           max-jobs = 1
+        use_cache: false
     - run: |
         nix build -L --file ./ci/gha/profile-build buildTimeReport --out-link build-time-report.md
         cat build-time-report.md >> $GITHUB_STEP_SUMMARY
