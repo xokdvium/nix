@@ -1,6 +1,7 @@
 #! /usr/bin/env nix-shell
 #! nix-shell -i perl -p perl perlPackages.LWPUserAgent perlPackages.LWPProtocolHttps perlPackages.FileSlurp perlPackages.NetAmazonS3 gnupg1
 
+use Getopt::Long;
 use strict;
 use Data::Dumper;
 use File::Basename;
@@ -13,7 +14,21 @@ use Net::Amazon::S3;
 
 delete $ENV{'shell'}; # shut up a LWP::UserAgent.pm warning
 
-my $evalId = $ARGV[0] or die "Usage: $0 EVAL-ID\n";
+my $skipDocker = 0;
+my $skipGit = 0;
+my $projectRoot;
+my $s3Endpoint;
+my $s3Host = "s3-eu-west-1.amazonaws.com";
+
+GetOptions(
+    "skip-docker" => \$skipDocker,
+    "skip-git" => \$skipGit,
+    "project-root=s" => \$projectRoot,
+    "s3-endpoint=s" => \$s3Endpoint,
+    "s3-host=s" => \$s3Host,
+) or die "Error in command line arguments\n";
+
+my $evalId = $ARGV[0] or die "Usage: $0 [--skip-docker] [--skip-git] [--project-root=PATH] [--s3-endpoint=URL] [--s3-host=HOST] EVAL-ID\n";
 
 my $releasesBucketName = "nix-releases";
 my $channelsBucketName = "nix-channels";
@@ -64,23 +79,29 @@ my $binaryCache = "https://cache.nixos.org/?local-nar-cache=$narCache";
 # S3 setup.
 my $aws_access_key_id = $ENV{'AWS_ACCESS_KEY_ID'} or die "No AWS_ACCESS_KEY_ID given.";
 my $aws_secret_access_key = $ENV{'AWS_SECRET_ACCESS_KEY'} or die "No AWS_SECRET_ACCESS_KEY given.";
+my $aws_session_token = $ENV{'AWS_SESSION_TOKEN'};
 
 my $s3 = Net::Amazon::S3->new(
     { aws_access_key_id     => $aws_access_key_id,
       aws_secret_access_key => $aws_secret_access_key,
+      $aws_session_token ? (aws_session_token => $aws_session_token) : (),
       retry                 => 1,
-      host                  => "s3-eu-west-1.amazonaws.com",
+      host                  => $s3Host,
+      secure                => ($s3Endpoint && $s3Endpoint =~ /^http:/) ? 0 : 1,
     });
 
 my $releasesBucket = $s3->bucket($releasesBucketName) or die;
 
-my $s3_us = Net::Amazon::S3->new(
+my $s3_channels = Net::Amazon::S3->new(
     { aws_access_key_id     => $aws_access_key_id,
       aws_secret_access_key => $aws_secret_access_key,
+      $aws_session_token ? (aws_session_token => $aws_session_token) : (),
       retry                 => 1,
+      host                  => $s3Host,
+      secure                => ($s3Endpoint && $s3Endpoint =~ /^http:/) ? 0 : 1,
     });
 
-my $channelsBucket = $s3_us->bucket($channelsBucketName) or die;
+my $channelsBucket = $s3_channels->bucket($channelsBucketName) or die;
 
 sub getStorePath {
     my ($jobName, $output) = @_;
@@ -115,7 +136,8 @@ sub copyManual {
         File::Path::remove_tree("$tmpDir/manual.tmp", {safe => 1});
     }
 
-    system("aws s3 sync '$tmpDir/manual' s3://$releasesBucketName/$releaseDir/manual") == 0
+    my $awsEndpoint = $s3Endpoint ? "--endpoint-url $s3Endpoint" : "";
+    system("aws $awsEndpoint s3 sync '$tmpDir/manual' s3://$releasesBucketName/$releaseDir/manual") == 0
         or die "syncing manual to S3\n";
 }
 
@@ -182,6 +204,7 @@ my $dockerManifest = "";
 my $dockerManifestLatest = "";
 my $haveDocker = 0;
 
+unless ($skipDocker) {
 for my $platforms (["x86_64-linux", "amd64"], ["aarch64-linux", "arm64"]) {
     my $system = $platforms->[0];
     my $dockerPlatform = $platforms->[1];
@@ -236,6 +259,7 @@ if ($haveDocker) {
         system("docker manifest push nixos/nix:latest") == 0 or die;
     }
 }
+}
 
 # Upload nix-fallback-paths.nix.
 write_file("$tmpDir/fallback-paths.nix",
@@ -276,11 +300,14 @@ $channelsBucket->add_key(
     if $isLatest;
 
 # Tag the release in Git.
-chdir("/home/eelco/Dev/nix-pristine") or die;
-system("git remote update origin") == 0 or die;
-system("git tag --force --sign $version $nixRev -m 'Tagging release $version'") == 0 or die;
-system("git push --tags") == 0 or die;
-system("git push --force-with-lease origin $nixRev:refs/heads/latest-release") == 0 or die if $isLatest;
+unless ($skipGit) {
+    my $gitDir = $projectRoot // "/home/eelco/Dev/nix-pristine";
+    chdir($gitDir) or die "Cannot chdir to $gitDir: $!";
+    system("git remote update origin") == 0 or die;
+    system("git tag --force --sign $version $nixRev -m 'Tagging release $version'") == 0 or die;
+    system("git push --tags") == 0 or die;
+    system("git push --force-with-lease origin $nixRev:refs/heads/latest-release") == 0 or die if $isLatest;
+}
 
 File::Path::remove_tree($narCache, {safe => 1});
 File::Path::remove_tree($tmpDir, {safe => 1});
