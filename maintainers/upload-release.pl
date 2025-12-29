@@ -16,19 +16,23 @@ delete $ENV{'shell'}; # shut up a LWP::UserAgent.pm warning
 
 my $skipDocker = 0;
 my $skipGit = 0;
+my $skipS3 = 0;
 my $projectRoot;
 my $s3Endpoint;
 my $s3Host = "s3-eu-west-1.amazonaws.com";
+my $dockerOwner = "nixos/nix";
 
 GetOptions(
     "skip-docker" => \$skipDocker,
     "skip-git" => \$skipGit,
+    "skip-s3" => \$skipS3,
     "project-root=s" => \$projectRoot,
     "s3-endpoint=s" => \$s3Endpoint,
     "s3-host=s" => \$s3Host,
+    "docker-owner=s" => \$dockerOwner,
 ) or die "Error in command line arguments\n";
 
-my $evalId = $ARGV[0] or die "Usage: $0 [--skip-docker] [--skip-git] [--project-root=PATH] [--s3-endpoint=URL] [--s3-host=HOST] EVAL-ID\n";
+my $evalId = $ARGV[0] or die "Usage: $0 [--skip-docker] [--skip-git] [--skip-s3] [--docker-owner=OWNER] [--project-root=PATH] [--s3-endpoint=URL] [--s3-host=HOST] EVAL-ID\n";
 
 my $releasesBucketName = "nix-releases";
 my $channelsBucketName = "nix-channels";
@@ -77,31 +81,38 @@ File::Path::make_path($narCache);
 my $binaryCache = "https://cache.nixos.org/?local-nar-cache=$narCache";
 
 # S3 setup.
-my $aws_access_key_id = $ENV{'AWS_ACCESS_KEY_ID'} or die "No AWS_ACCESS_KEY_ID given.";
-my $aws_secret_access_key = $ENV{'AWS_SECRET_ACCESS_KEY'} or die "No AWS_SECRET_ACCESS_KEY given.";
+my $aws_access_key_id = $ENV{'AWS_ACCESS_KEY_ID'};
+my $aws_secret_access_key = $ENV{'AWS_SECRET_ACCESS_KEY'};
 my $aws_session_token = $ENV{'AWS_SESSION_TOKEN'};
 
-my $s3 = Net::Amazon::S3->new(
-    { aws_access_key_id     => $aws_access_key_id,
-      aws_secret_access_key => $aws_secret_access_key,
-      $aws_session_token ? (aws_session_token => $aws_session_token) : (),
-      retry                 => 1,
-      host                  => $s3Host,
-      secure                => ($s3Endpoint && $s3Endpoint =~ /^http:/) ? 0 : 1,
-    });
+my ($s3, $releasesBucket, $s3_channels, $channelsBucket);
 
-my $releasesBucket = $s3->bucket($releasesBucketName) or die;
+unless ($skipS3) {
+    $aws_access_key_id or die "No AWS_ACCESS_KEY_ID given.";
+    $aws_secret_access_key or die "No AWS_SECRET_ACCESS_KEY given.";
 
-my $s3_channels = Net::Amazon::S3->new(
-    { aws_access_key_id     => $aws_access_key_id,
-      aws_secret_access_key => $aws_secret_access_key,
-      $aws_session_token ? (aws_session_token => $aws_session_token) : (),
-      retry                 => 1,
-      host                  => $s3Host,
-      secure                => ($s3Endpoint && $s3Endpoint =~ /^http:/) ? 0 : 1,
-    });
+    $s3 = Net::Amazon::S3->new(
+        { aws_access_key_id     => $aws_access_key_id,
+          aws_secret_access_key => $aws_secret_access_key,
+          $aws_session_token ? (aws_session_token => $aws_session_token) : (),
+          retry                 => 1,
+          host                  => $s3Host,
+          secure                => ($s3Endpoint && $s3Endpoint =~ /^http:/) ? 0 : 1,
+        });
 
-my $channelsBucket = $s3_channels->bucket($channelsBucketName) or die;
+    $releasesBucket = $s3->bucket($releasesBucketName) or die;
+
+    $s3_channels = Net::Amazon::S3->new(
+        { aws_access_key_id     => $aws_access_key_id,
+          aws_secret_access_key => $aws_secret_access_key,
+          $aws_session_token ? (aws_session_token => $aws_session_token) : (),
+          retry                 => 1,
+          host                  => $s3Host,
+          secure                => ($s3Endpoint && $s3Endpoint =~ /^http:/) ? 0 : 1,
+        });
+
+    $channelsBucket = $s3_channels->bucket($channelsBucketName) or die;
+}
 
 sub getStorePath {
     my ($jobName, $output) = @_;
@@ -136,12 +147,14 @@ sub copyManual {
         File::Path::remove_tree("$tmpDir/manual.tmp", {safe => 1});
     }
 
-    my $awsEndpoint = $s3Endpoint ? "--endpoint-url $s3Endpoint" : "";
-    system("aws $awsEndpoint s3 sync '$tmpDir/manual' s3://$releasesBucketName/$releaseDir/manual") == 0
-        or die "syncing manual to S3\n";
+    unless ($skipS3) {
+        my $awsEndpoint = $s3Endpoint ? "--endpoint-url $s3Endpoint" : "";
+        system("aws $awsEndpoint s3 sync '$tmpDir/manual' s3://$releasesBucketName/$releaseDir/manual") == 0
+            or die "syncing manual to S3\n";
+    }
 }
 
-copyManual;
+copyManual unless $skipS3;
 
 sub downloadFile {
     my ($jobName, $productNr, $dstName) = @_;
@@ -199,7 +212,7 @@ eval {
 warn "$@" if $@;
 downloadFile("installerScript", "1");
 
-# Upload docker images to dockerhub.
+# Upload docker images.
 my $dockerManifest = "";
 my $dockerManifestLatest = "";
 my $haveDocker = 0;
@@ -218,8 +231,8 @@ for my $platforms (["x86_64-linux", "amd64"], ["aarch64-linux", "arm64"]) {
     print STDERR "loading docker image for $dockerPlatform...\n";
     system("docker load -i $tmpDir/$fn") == 0 or die;
 
-    my $tag = "nixos/nix:$version-$dockerPlatform";
-    my $latestTag = "nixos/nix:latest-$dockerPlatform";
+    my $tag = "$dockerOwner:$version-$dockerPlatform";
+    my $latestTag = "$dockerOwner:latest-$dockerPlatform";
 
     print STDERR "tagging $version docker image for $dockerPlatform...\n";
     system("docker tag nix:$version $tag") == 0 or die;
@@ -243,20 +256,20 @@ for my $platforms (["x86_64-linux", "amd64"], ["aarch64-linux", "arm64"]) {
 
 if ($haveDocker) {
     print STDERR "creating multi-platform docker manifest...\n";
-    system("docker manifest rm nixos/nix:$version");
-    system("docker manifest create nixos/nix:$version $dockerManifest") == 0 or die;
+    system("docker manifest rm $dockerOwner:$version");
+    system("docker manifest create $dockerOwner:$version $dockerManifest") == 0 or die;
     if ($isLatest) {
         print STDERR "creating latest multi-platform docker manifest...\n";
-        system("docker manifest rm nixos/nix:latest");
-        system("docker manifest create nixos/nix:latest $dockerManifestLatest") == 0 or die;
+        system("docker manifest rm $dockerOwner:latest");
+        system("docker manifest create $dockerOwner:latest $dockerManifestLatest") == 0 or die;
     }
 
     print STDERR "pushing multi-platform docker manifest...\n";
-    system("docker manifest push nixos/nix:$version") == 0 or die;
+    system("docker manifest push $dockerOwner:$version") == 0 or die;
 
     if ($isLatest) {
         print STDERR "pushing latest multi-platform docker manifest...\n";
-        system("docker manifest push nixos/nix:latest") == 0 or die;
+        system("docker manifest push $dockerOwner:latest") == 0 or die;
     }
 }
 }
@@ -273,31 +286,33 @@ write_file("$tmpDir/fallback-paths.nix",
     "}\n");
 
 # Upload release files to S3.
-for my $fn (glob "$tmpDir/*") {
-    my $name = basename($fn);
-    next if $name eq "manual";
-    my $dstKey = "$releaseDir/" . $name;
-    unless (defined $releasesBucket->head_key($dstKey)) {
-        print STDERR "uploading $fn to s3://$releasesBucketName/$dstKey...\n";
+unless ($skipS3) {
+    for my $fn (glob "$tmpDir/*") {
+        my $name = basename($fn);
+        next if $name eq "manual";
+        my $dstKey = "$releaseDir/" . $name;
+        unless (defined $releasesBucket->head_key($dstKey)) {
+            print STDERR "uploading $fn to s3://$releasesBucketName/$dstKey...\n";
 
-        my $configuration = ();
-        $configuration->{content_type} = "application/octet-stream";
+            my $configuration = ();
+            $configuration->{content_type} = "application/octet-stream";
 
-        if ($fn =~ /.sha256|install|\.nix$/) {
-            $configuration->{content_type} = "text/plain";
+            if ($fn =~ /.sha256|install|\.nix$/) {
+                $configuration->{content_type} = "text/plain";
+            }
+
+            $releasesBucket->add_key_filename($dstKey, $fn, $configuration)
+                or die $releasesBucket->err . ": " . $releasesBucket->errstr;
         }
-
-        $releasesBucket->add_key_filename($dstKey, $fn, $configuration)
-            or die $releasesBucket->err . ": " . $releasesBucket->errstr;
     }
-}
 
-# Update the "latest" symlink.
-$channelsBucket->add_key(
-    "nix-latest/install", "",
-    { "x-amz-website-redirect-location" => "https://releases.nixos.org/$releaseDir/install" })
-    or die $channelsBucket->err . ": " . $channelsBucket->errstr
-    if $isLatest;
+    # Update the "latest" symlink.
+    $channelsBucket->add_key(
+        "nix-latest/install", "",
+        { "x-amz-website-redirect-location" => "https://releases.nixos.org/$releaseDir/install" })
+        or die $channelsBucket->err . ": " . $channelsBucket->errstr
+        if $isLatest;
+}
 
 # Tag the release in Git.
 unless ($skipGit) {
