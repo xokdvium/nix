@@ -10,7 +10,8 @@ namespace nix {
 struct LocalFSStoreConfig : virtual StoreConfig
 {
 private:
-    static OptionalPathSetting makeRootDirSetting(LocalFSStoreConfig & self, std::optional<Path> defaultValue)
+    static Setting<std::optional<std::filesystem::path>>
+    makeRootDirSetting(LocalFSStoreConfig & self, std::optional<std::filesystem::path> defaultValue)
     {
         return {
             &self,
@@ -30,9 +31,9 @@ public:
      *
      * @todo Make this less error-prone with new store settings system.
      */
-    LocalFSStoreConfig(PathView path, const Params & params);
+    LocalFSStoreConfig(const std::filesystem::path & path, const Params & params);
 
-    OptionalPathSetting rootDir = makeRootDirSetting(*this, std::nullopt);
+    Setting<std::optional<std::filesystem::path>> rootDir = makeRootDirSetting(*this, std::nullopt);
 
 private:
 
@@ -52,18 +53,21 @@ public:
 
     PathSetting stateDir{
         this,
-        rootDir.get() ? *rootDir.get() + "/nix/var/nix" : getDefaultStateDir(),
+        rootDir.get() ? (*rootDir.get() / "nix/var/nix").string() : getDefaultStateDir(),
         "state",
         "Directory where Nix stores state."};
 
     PathSetting logDir{
         this,
-        rootDir.get() ? *rootDir.get() + "/nix/var/log/nix" : getDefaultLogDir(),
+        rootDir.get() ? (*rootDir.get() / "nix/var/log/nix").string() : getDefaultLogDir(),
         "log",
         "directory where Nix stores log files."};
 
     PathSetting realStoreDir{
-        this, rootDir.get() ? *rootDir.get() + "/nix/store" : storeDir, "real", "Physical path of the Nix store."};
+        this,
+        rootDir.get() ? (*rootDir.get() / "nix/store").string() : storeDir,
+        "real",
+        "Physical path of the Nix store."};
 };
 
 struct alignas(8) /* Work around ASAN failures on i686-linux. */
