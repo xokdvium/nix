@@ -37,8 +37,7 @@ void HttpsBinaryCacheStoreTest::SetUp()
     delTmpDir = std::make_unique<AutoDelete>(tmpDir);
 
     localCacheStore =
-        make_ref<LocalBinaryCacheStoreConfig>("file", cacheDir.string(), LocalBinaryCacheStoreConfig::Params{})
-            ->openStore();
+        make_ref<LocalBinaryCacheStoreConfig>(cacheDir, LocalBinaryCacheStoreConfig::Params{})->openStore();
 
     caCert = tmpDir / "ca.crt";
     caKey = tmpDir / "ca.key";

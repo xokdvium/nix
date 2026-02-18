@@ -9,7 +9,7 @@
 namespace nix {
 
 LocalBinaryCacheStoreConfig::LocalBinaryCacheStoreConfig(
-    std::string_view scheme, PathView binaryCacheDir, const StoreReference::Params & params)
+    const std::filesystem::path & binaryCacheDir, const StoreReference::Params & params)
     : Store::Config{params}
     , BinaryCacheStoreConfig{params}
     , binaryCacheDir(binaryCacheDir)

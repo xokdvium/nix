@@ -56,9 +56,9 @@
 
 namespace nix {
 
-LocalStoreConfig::LocalStoreConfig(std::string_view scheme, std::string_view authority, const Params & params)
+LocalStoreConfig::LocalStoreConfig(const std::filesystem::path & path, const Params & params)
     : StoreConfig(params)
-    , LocalFSStoreConfig(authority, params)
+    , LocalFSStoreConfig(path, params)
 {
 }
 

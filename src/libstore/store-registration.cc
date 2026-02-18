@@ -52,7 +52,7 @@ ref<StoreConfig> resolveStoreConfig(StoreReference && storeURI)
                         warn("'%s' does not exist, so Nix will use '%s' as a chroot store", stateDir, chrootStore);
                     } else
                         debug("'%s' does not exist, so Nix will use '%s' as a chroot store", stateDir, chrootStore);
-                    return make_ref<LocalStore::Config>("local", chrootStore, params);
+                    return make_ref<LocalStore::Config>(std::filesystem::path(chrootStore), params);
                 }
 #endif
                 else

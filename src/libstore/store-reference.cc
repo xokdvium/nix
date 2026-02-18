@@ -111,7 +111,7 @@ StoreReference StoreReference::parse(const std::string & uri, const StoreReferen
                 .variant =
                     Specified{
                         .scheme = "local",
-                        .authority = absPath(baseURI),
+                        .authority = percentEncode(absPath(baseURI), /*keep=*/"/"),
                     },
                 .params = std::move(params),
             };
