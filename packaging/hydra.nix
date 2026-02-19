@@ -271,20 +271,10 @@ rec {
 
       # Make sure that nix-env still produces the exact same result
       # on a particular version of Nixpkgs.
-      evalNixpkgs =
-        let
-          inherit (nixpkgsFor.x86_64-linux.native) runCommand nix;
-        in
-        runCommand "eval-nixos" { buildInputs = [ nix ]; } ''
-          type -p nix-env
-          # Note: we're filtering out nixos-install-tools because https://github.com/NixOS/nixpkgs/pull/153594#issuecomment-1020530593.
-          (
-            set -x
-            time nix-env --store dummy:// -f ${nixpkgs-regression} -qaP --drv-path | sort | grep -v nixos-install-tools > packages
-            [[ $(sha1sum < packages | cut -c1-40) = e01b031fc9785a572a38be6bc473957e3b6faad7 ]]
-          )
-          mkdir $out
-        '';
+      evalNixpkgs = import ./eval-nixpkgs-tests.nix {
+        pkgs = nixpkgsFor.x86_64-linux.native;
+        inherit lib;
+      };
 
       nixpkgsLibTests = forAllSystems (
         system:
