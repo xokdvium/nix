@@ -17,6 +17,10 @@ SSHStoreConfig::SSHStoreConfig(const ParsedURL::Authority & authority, const Par
 {
 }
 
+void SSHStoreConfig::anchor() {}
+
+void MountedSSHStoreConfig::anchor() {}
+
 std::string SSHStoreConfig::doc()
 {
     return
@@ -39,6 +43,10 @@ StoreReference SSHStoreConfig::getReference() const
 struct alignas(8) /* Work around ASAN failures on i686-linux. */
     SSHStore : virtual RemoteStore
 {
+private:
+    void anchor() override {}
+
+public:
     using Config = SSHStoreConfig;
 
     ref<const Config> config;
@@ -128,6 +136,10 @@ std::string MountedSSHStoreConfig::doc()
  */
 struct MountedSSHStore : virtual SSHStore, virtual LocalFSStore
 {
+private:
+    void anchor() override {}
+
+public:
     using Config = MountedSSHStoreConfig;
 
     MountedSSHStore(ref<const Config> config)

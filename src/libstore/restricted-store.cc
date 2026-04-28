@@ -38,6 +38,10 @@ bool RestrictionContext::isAllowed(const DerivedPath & req)
  */
 struct RestrictedStore : public virtual IndirectRootStore, public virtual GcStore
 {
+private:
+    void anchor() override {}
+
+public:
     ref<const LocalStore::Config> config;
 
     ref<LocalStore> next;
