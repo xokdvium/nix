@@ -36,6 +36,7 @@
 #  define pivot_root(new_root, put_old) (syscall(SYS_pivot_root, new_root, put_old))
 
 namespace nix {
+namespace {
 
 static void setupSeccomp(const LocalSettings & localSettings)
 {
@@ -863,6 +864,7 @@ struct ChrootLinuxDerivationBuilder : ChrootDerivationBuilder, LinuxDerivationBu
     }
 };
 
+} // namespace
 } // namespace nix
 
 #  undef DO_LANDLOCK

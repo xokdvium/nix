@@ -34,6 +34,8 @@ AwsAuthError::AwsAuthError(int errorCode)
 {
 }
 
+AwsCredentialProvider::~AwsCredentialProvider() {}
+
 namespace {
 
 /**
@@ -284,8 +286,6 @@ static AwsCredentials getCredentialsFromProvider(std::shared_ptr<Aws::Crt::Auth:
     return fut.get(); // This will throw if set_exception was called
 }
 
-} // anonymous namespace
-
 class AwsCredentialProviderImpl : public AwsCredentialProvider
 {
 public:
@@ -450,6 +450,8 @@ AwsCredentials AwsCredentialProviderImpl::getCredentialsRaw(const std::string & 
 
     return getCredentialsFromProvider(provider);
 }
+
+} // anonymous namespace
 
 ref<AwsCredentialProvider> makeAwsCredentialsProvider()
 {

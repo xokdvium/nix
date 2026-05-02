@@ -4,6 +4,8 @@
 
 namespace nix {
 
+namespace {
+
 class CachingSourceAccessor : public SourceAccessor
 {
     ref<SourceAccessor> next;
@@ -93,6 +95,8 @@ public:
         return next->getFingerprint(path);
     }
 };
+
+} // namespace
 
 ref<SourceAccessor> makeCachingSourceAccessor(ref<SourceAccessor> next)
 {

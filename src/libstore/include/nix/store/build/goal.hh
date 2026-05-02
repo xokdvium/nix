@@ -10,8 +10,11 @@
 
 namespace nix {
 
-struct TimedOut final : CloneableError<TimedOut, BuildError>
+class TimedOut final : public CloneableError<TimedOut, BuildError>
 {
+    void anchor() override;
+
+public:
     time_t maxDuration;
 
     TimedOut(time_t maxDuration);

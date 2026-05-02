@@ -96,6 +96,8 @@ std::optional<std::filesystem::path> FileTransferSettings::getDefaultSSLCertFile
     return std::nullopt;
 }
 
+void FileTransferSettings::anchor() {}
+
 FileTransferSettings::FileTransferSettings()
 {
     std::optional<AbsolutePath> sslOverride =
@@ -112,6 +114,8 @@ FileTransferSettings::FileTransferSettings()
 FileTransferSettings fileTransferSettings;
 
 static GlobalConfig::Register rFileTransferSettings(&fileTransferSettings);
+
+FileTransfer::~FileTransfer() {}
 
 namespace {
 
@@ -973,15 +977,7 @@ struct curlFileTransfer : public FileTransfer
         workerThread = std::thread([&]() { workerThreadEntry(); });
     }
 
-    ~curlFileTransfer()
-    {
-        try {
-            stopWorkerThread();
-        } catch (...) {
-            ignoreExceptionInDestructor();
-        }
-        workerThread.join();
-    }
+    ~curlFileTransfer() override;
 
     void stopWorkerThread()
     {
@@ -1177,6 +1173,16 @@ struct curlFileTransfer : public FileTransfer
         unpauseTransfer(handle.item);
     }
 };
+
+curlFileTransfer::~curlFileTransfer()
+{
+    try {
+        stopWorkerThread();
+    } catch (...) {
+        ignoreExceptionInDestructor();
+    }
+    workerThread.join();
+}
 
 ref<curlFileTransfer> makeCurlFileTransfer(const FileTransferSettings & settings = fileTransferSettings)
 {

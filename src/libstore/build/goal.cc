@@ -10,6 +10,8 @@ TimedOut::TimedOut(time_t maxDuration)
 {
 }
 
+void TimedOut::anchor() {}
+
 using Co = nix::Goal::Co;
 using promise_type = nix::Goal::promise_type;
 

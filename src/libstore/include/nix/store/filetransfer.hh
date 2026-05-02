@@ -23,10 +23,11 @@ namespace nix {
 
 const std::filesystem::path & nixConfDir();
 
-struct FileTransferSettings : Config
+class FileTransferSettings : public Config
 {
-private:
     static std::optional<std::filesystem::path> getDefaultSSLCertFile();
+
+    void anchor() override;
 
 public:
     FileTransferSettings();
@@ -418,7 +419,7 @@ public:
         }
     };
 
-    virtual ~FileTransfer() {}
+    virtual ~FileTransfer();
 
     /**
      * Enqueue a data transfer request, returning a future to the result of

@@ -4,6 +4,8 @@
 
 namespace nix {
 
+namespace {
+
 struct MountedSourceAccessorImpl : MountedSourceAccessor
 {
     boost::concurrent_flat_map<CanonPath, ref<SourceAccessor>> mounts;
@@ -105,6 +107,10 @@ struct MountedSourceAccessorImpl : MountedSourceAccessor
         return accessor->getFingerprint(subpath);
     }
 };
+
+} // namespace
+
+MountedSourceAccessor::~MountedSourceAccessor() {}
 
 ref<MountedSourceAccessor> makeMountedSourceAccessor(std::map<CanonPath, ref<SourceAccessor>> mounts)
 {

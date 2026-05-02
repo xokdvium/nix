@@ -1,5 +1,7 @@
 namespace nix {
 
+namespace {
+
 struct ExternalDerivationBuilder : DerivationBuilderImpl
 {
     ExternalBuilder externalBuilder;
@@ -105,6 +107,8 @@ struct ExternalDerivationBuilder : DerivationBuilderImpl
         });
     }
 };
+
+} // namespace
 
 DerivationBuilderUnique makeExternalDerivationBuilder(
     LocalStore & store,

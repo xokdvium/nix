@@ -160,8 +160,6 @@ static void createPasswordFiles(std::filesystem::path & chrootRootDir, std::vect
     // our build user wouldn't be able to read them anyway
 }
 
-} // namespace
-
 struct FreeBSDDerivationBuilder : virtual DerivationBuilderImpl
 {
     using DerivationBuilderImpl::DerivationBuilderImpl;
@@ -494,6 +492,7 @@ struct ChrootFreeBSDDerivationBuilder : ChrootDerivationBuilder, FreeBSDDerivati
     }
 };
 
+} // namespace
 } // namespace nix
 
 #endif

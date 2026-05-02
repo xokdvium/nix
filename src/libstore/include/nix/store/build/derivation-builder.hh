@@ -22,6 +22,10 @@ namespace nix {
  */
 struct BuilderFailureError final : CloneableError<BuilderFailureError, BuildError>
 {
+private:
+    void anchor() override;
+
+public:
     int builderStatus;
 
     std::string extraMsgAfter;
@@ -109,7 +113,7 @@ struct DerivationBuilderParams
  */
 struct DerivationBuilderCallbacks
 {
-    virtual ~DerivationBuilderCallbacks() = default;
+    virtual ~DerivationBuilderCallbacks();
 
     /**
      * Open a log file and a pipe to it.

@@ -1088,6 +1088,8 @@ Value * ExprPath::maybeThunk(EvalState & state, Env & env)
     return &v;
 }
 
+namespace {
+
 /**
  * A helper `Expr` class to lets us parse and evaluate Nix expressions
  * from a thunk, ensuring that every file is parsed/evaluated only
@@ -1130,6 +1132,8 @@ struct ExprParseFile : Expr, gc
         }
     }
 };
+
+} // namespace
 
 void EvalState::evalFile(const SourcePath & path, Value & v, bool mustBeTrivial)
 {

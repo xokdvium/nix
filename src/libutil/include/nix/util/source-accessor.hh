@@ -248,8 +248,11 @@ ref<SourceAccessor> makeEmptySourceAccessor();
  */
 MakeError(RestrictedPathError, Error);
 
-struct SymlinkNotAllowed final : public CloneableError<SymlinkNotAllowed, Error>
+class SymlinkNotAllowed final : public CloneableError<SymlinkNotAllowed, Error>
 {
+    void anchor() override;
+
+public:
     CanonPath path;
 
     SymlinkNotAllowed(CanonPath path)

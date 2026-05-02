@@ -70,7 +70,7 @@ public:
         }
     }
 
-    virtual ~AwsCredentialProvider() {}
+    virtual ~AwsCredentialProvider();
 };
 
 /**

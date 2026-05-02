@@ -4,6 +4,8 @@
 
 namespace nix {
 
+namespace {
+
 struct NarAccessorImpl : NarAccessor
 {
     NarListing root;
@@ -134,6 +136,10 @@ struct NarAccessorImpl : NarAccessor
         return sym->target;
     }
 };
+
+} // namespace
+
+NarAccessor::~NarAccessor() {}
 
 ref<NarAccessor> makeNarAccessor(std::string && nar)
 {

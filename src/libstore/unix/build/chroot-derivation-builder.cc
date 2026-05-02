@@ -3,6 +3,7 @@
 #  include "chroot.hh"
 
 namespace nix {
+namespace {
 
 struct ChrootDerivationBuilder : virtual DerivationBuilderImpl
 {
@@ -147,6 +148,7 @@ struct ChrootDerivationBuilder : virtual DerivationBuilderImpl
     }
 };
 
+} // namespace
 } // namespace nix
 
 #endif

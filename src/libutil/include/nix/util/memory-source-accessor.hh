@@ -148,6 +148,10 @@ struct MemorySourceAccessor : virtual SourceAccessor
  */
 struct MemorySink : FileSystemObjectSink
 {
+private:
+    void anchor() override;
+
+public:
     MemorySourceAccessor & dst;
 
     MemorySink(MemorySourceAccessor & dst)

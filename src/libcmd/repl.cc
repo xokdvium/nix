@@ -163,6 +163,8 @@ static std::ostream & showDebugTrace(std::ostream & out, const PosTable & positi
 
 MakeError(IncompleteReplExpr, ParseError);
 
+void IncompleteReplExpr::anchor() {}
+
 static bool isFirstRepl = true;
 
 ReplExitStatus NixRepl::mainLoop()
