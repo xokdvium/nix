@@ -120,8 +120,9 @@ private:
 
     BuildMode buildMode;
 
-    Co init();
-    Co haveDerivation(StorePath drvPath, Derivation drv);
+    asio::awaitable<void> run() override;
+
+    asio::awaitable<void> haveDerivation(StorePath drvPath, Derivation drv);
 
     /**
      * Shared between both constructors

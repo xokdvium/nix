@@ -79,14 +79,14 @@ private:
     /**
      * The states.
      */
-    Co gaveUpOnSubstitution(bool storeDerivation);
-    Co tryToBuild(StorePathSet inputPaths);
-    Co buildWithHook(
+    asio::awaitable<void> gaveUpOnSubstitution(bool storeDerivation);
+    asio::awaitable<void> tryToBuild(StorePathSet inputPaths);
+    asio::awaitable<void> buildWithHook(
         StorePathSet inputPaths,
         std::map<std::string, InitialOutput> initialOutputs,
         DerivationOptions<StorePath> drvOptions,
         PathLocks outputLocks);
-    Co buildLocally(
+    asio::awaitable<void> buildLocally(
         LocalBuildCapability localBuildCap,
         StorePathSet inputPaths,
         std::map<std::string, InitialOutput> initialOutputs,
@@ -98,7 +98,7 @@ private:
      */
     HookReply tryBuildHook(const DerivationOptions<StorePath> & drvOptions);
 
-    Done doneFailureLogTooLong(BuildLog & buildLog);
+    void doneFailureLogTooLong(BuildLog & buildLog);
 
     /**
      * Wrappers around the corresponding Store methods that first consult the

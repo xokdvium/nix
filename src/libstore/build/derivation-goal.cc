@@ -45,7 +45,7 @@ std::string DerivationGoal::key()
     }.to_string(worker.store);
 }
 
-Goal::Co DerivationGoal::haveDerivation(bool storeDerivation)
+asio::awaitable<void> DerivationGoal::haveDerivation(bool storeDerivation)
 {
     trace("have derivation");
 

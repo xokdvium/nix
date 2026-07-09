@@ -63,7 +63,6 @@ headers = [ config_pub_h ] + files(
   'memo.hh',
   'memory-source-accessor.hh',
   'mounted-source-accessor.hh',
-  'muxable-pipe.hh',
   'nar-accessor.hh',
   'nar-cache.hh',
   'nar-listing.hh',

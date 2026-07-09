@@ -7,7 +7,6 @@
 #include "nix/store/build/goal.hh"
 #include "nix/store/build-result.hh"
 #include "nix/store/realisation.hh"
-#include "nix/util/muxable-pipe.hh"
 #include "nix/util/async.hh"
 
 #include <boost/asio/strand.hpp>
@@ -110,27 +109,6 @@ GoalPtr upcast_goal(std::shared_ptr<PathSubstitutionGoal> subGoal);
 GoalPtr upcast_goal(std::shared_ptr<DrvOutputSubstitutionGoal> subGoal);
 GoalPtr upcast_goal(std::shared_ptr<DerivationGoal> subGoal);
 
-typedef std::chrono::time_point<std::chrono::steady_clock> steady_time_point;
-
-/**
- * A mapping used to remember for each child process to what goal it
- * belongs, and comm channels for receiving log data and output
- * path creation commands.
- */
-struct Child
-{
-    WeakGoalPtr goal;
-    Goal * goal2; // ugly hackery
-    std::set<MuxablePipePollState::CommChannel> channels;
-    bool respectTimeouts;
-    bool inBuildSlot;
-    /**
-     * Time we last got output on stdout/stderr
-     */
-    steady_time_point lastOutput;
-    steady_time_point timeStarted;
-};
-
 #ifndef _WIN32 // TODO Enable building on Windows
 /* Forward definition. */
 struct HookInstance;
@@ -145,6 +123,7 @@ public:
     const WorkerSettings & settings;
 
 private:
+    friend struct Goal;
 
     /* Note: the worker should only have strong pointers to the
        top-level goals. */
@@ -174,37 +153,6 @@ private:
     Goals topGoals;
 
     /**
-     * Goals that are ready to do some work.
-     */
-    WeakGoals awake;
-
-    /**
-     * Goals waiting for a build slot.
-     */
-    WeakGoals wantingToBuild;
-
-    /**
-     * Goals waiting for a substitution slot.
-     */
-    WeakGoals wantingToSubstitute;
-
-    /**
-     * Child processes currently running.
-     */
-    std::list<Child> children;
-
-    /**
-     * Number of build slots occupied.  This includes local builds but does not
-     * include substitutions or remote builds via the build hook.
-     */
-    size_t nrLocalBuilds;
-
-    /**
-     * Number of substitution slots occupied.
-     */
-    size_t nrSubstitutions;
-
-    /**
      * Maps used to prevent multiple instantiations of a goal for the
      * same derivation / path.
      */
@@ -218,60 +166,9 @@ private:
     std::map<DrvOutput, std::weak_ptr<DrvOutputSubstitutionGoal>> drvOutputSubstitutionGoals;
 
     /**
-     * Goals sleeping for a few seconds (polling a lock).
-     */
-    WeakGoals waitingForAWhile;
-
-    /**
-     * Goals awaiting completion callbacks.
-     */
-    WeakGoals waitingForCompletion;
-
-    /**
-     * Last time the goals in `waitingForAWhile` were woken up.
-     */
-    steady_time_point lastWokenUp;
-
-    /**
      * Cache for pathContentsGood().
      */
     std::map<StorePath, bool> pathContentsGoodCache;
-
-    class Waker
-    {
-#ifndef _WIN32
-        /**
-         * Wakeup pipe polled alongside all other goal FDs. Gets written to by
-         * enqueue(). Not needed on Windows.
-         */
-        unix::SelfPipe wakeupPipe;
-#else
-        Descriptor ioport;
-#endif
-        /**
-         * Queue of goals that need to be woken up.
-         */
-        Sync<std::queue<WeakGoalPtr>> wakeupQueue_;
-
-        friend class Worker;
-
-        void wakeAll(Worker & worker);
-
-        Waker()
-        {
-#ifndef _WIN32
-            wakeupPipe.create();
-#endif
-        }
-
-    public:
-        void enqueue(WeakGoalPtr goal);
-    };
-
-    /**
-     * This is behind a ref, so that other threads can take a weak_ptr to it.
-     */
-    ref<Waker> wakerState;
 
 public:
 
@@ -283,10 +180,6 @@ public:
      * Tracks different types of build failures for exit status computation.
      */
     ExitStatusFlags exitStatusFlags;
-
-#ifdef _WIN32
-    AutoCloseFD ioport;
-#endif
 
     Store & store;
     Store & evalStore;
@@ -384,83 +277,9 @@ public:
     void removeGoal(GoalPtr goal);
 
     /**
-     * Wake up a goal (i.e., there is something for it to do).
-     */
-    void wakeUp(GoalPtr goal);
-
-    /**
-     * Get a weak reference to the goal waker. It can be used to safely enqueue Goals
-     * for wakeup from other threads.
-     */
-    std::weak_ptr<Waker> getCrossThreadWaker();
-
-    /**
-     * Return the number of local build processes currently running (but not
-     * remote builds via the build hook).
-     */
-    size_t getNrLocalBuilds();
-
-    /**
-     * Return the number of substitution processes currently running.
-     */
-    size_t getNrSubstitutions();
-
-    /**
-     * Registers a running child process.  `inBuildSlot` means that
-     * the process counts towards the jobs limit.
-     */
-    void childStarted(
-        GoalPtr goal,
-        const std::set<MuxablePipePollState::CommChannel> & channels,
-        bool inBuildSlot,
-        bool respectTimeouts);
-
-    /**
-     * Unregisters a running child process. Wakes at most a single goal that is
-     * awaiting on the corresponding build slot type (building or substitution).
-     *
-     * This overload requires `goal` to point to a fully constructed,
-     * valid goal object, as it calls `goal->jobCategory()`.
-     */
-    void childTerminated(Goal * goal);
-
-    /**
-     * Unregisters a running child process, like the other overload.
-     *
-     * This overload only uses `goal` as a pointer for comparison with
-     * weak goal references, so it is safe to call from destructors
-     * where the goal object may be partially destroyed.
-     */
-    void childTerminated(Goal * goal, JobCategory jobCategory);
-
-    /**
-     * Put `goal` to sleep until a build slot becomes available (which
-     * might be right away).
-     */
-    void waitForBuildSlot(GoalPtr goal);
-
-    /**
-     * Wait for a few seconds and then retry this goal.  Used when
-     * waiting for a lock held by another process.  This kind of
-     * polling is inefficient, but POSIX doesn't really provide a way
-     * to wait for multiple locks in the main select() loop.
-     */
-    void waitForAWhile(GoalPtr goal);
-
-    /**
-     * Wait until explicitly resumed by Waker::enqueue.
-     */
-    void waitForCompletion(GoalPtr goal);
-
-    /**
      * Loop until the specified top-level goals have finished.
      */
     void run(const Goals & topGoals);
-
-    /**
-     * Wait for input to become available.
-     */
-    void waitForInput();
 
     /**
      * Check whether the given valid path exists and has the right

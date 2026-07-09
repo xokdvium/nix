@@ -2,6 +2,8 @@
 #include "nix/store/build/worker.hh"
 #include "nix/store/worker-settings.hh"
 
+#include <boost/asio/bind_cancellation_slot.hpp>
+
 namespace nix {
 
 void WorkerSettings::anchor() {}
@@ -16,153 +18,34 @@ void TimedOut::anchor() {}
 
 void Goal::anchor() {}
 
-using Co = nix::Goal::Co;
-using promise_type = nix::Goal::promise_type;
-
-void Goal::ChildEvents::pushChildEvent(ChildOutput event)
+static bool isCancellationException(std::exception_ptr ex)
 {
-    if (childTimeout)
-        return; // Already timed out, ignore
-    childOutputs.push(std::move(event));
-}
-
-void Goal::ChildEvents::pushChildEvent(ChildEOF event)
-{
-    if (childTimeout)
-        return; // Already timed out, ignore
-    assert(!childEOF);
-    childEOF = std::move(event);
-}
-
-void Goal::ChildEvents::pushChildEvent(TimedOut event)
-{
-    // Timeout is immediate - flush pending events
-    childOutputs = {};
-    childEOF.reset();
-    childTimeout = std::make_unique<TimedOut>(std::move(event));
-}
-
-bool Goal::ChildEvents::hasChildEvent() const
-{
-    return !childOutputs.empty() || childEOF || childTimeout;
-}
-
-Goal::ChildEvent Goal::ChildEvents::popChildEvent()
-{
-    if (!childOutputs.empty()) {
-        auto event = std::move(childOutputs.front());
-        childOutputs.pop();
-        return event;
-    }
-    if (childEOF)
-        return *std::exchange(childEOF, std::nullopt);
-    if (childTimeout)
-        return std::exchange(childTimeout, nullptr);
-    unreachable();
-}
-
-using handle_type = nix::Goal::handle_type;
-using Suspend = nix::Goal::Suspend;
-
-Co::Co(Co && rhs) noexcept
-{
-    this->handle = rhs.handle;
-    rhs.handle = nullptr;
-}
-
-Co & Co::operator=(Co && rhs) noexcept
-{
-    if (handle) {
-        handle.promise().alive = false;
-        handle.destroy();
-    }
-    handle = rhs.handle;
-    rhs.handle = nullptr;
-    return *this;
-}
-
-Co::~Co()
-{
-    if (handle) {
-        handle.promise().alive = false;
-        handle.destroy();
+    try {
+        std::rethrow_exception(ex);
+    } catch (const Interrupted &) {
+        return true;
+    } catch (const Cancelled &) {
+        return true;
+    } catch (const boost::system::system_error & e) {
+        return e.code() == asio::error::operation_aborted;
+    } catch (...) {
+        return false;
     }
 }
 
-Co promise_type::get_return_object()
+/* TODO: Probably move this to libutil or something. This should be used in much more places
+   where a single exception might be rethrown and caught multiple times. */
+[[noreturn]] static void rethrowMaybeCopyOfException(std::exception_ptr ex)
 {
-    auto handle = handle_type::from_promise(*this);
-    return Co{handle};
-};
-
-std::coroutine_handle<> promise_type::final_awaiter::await_suspend(handle_type h) noexcept
-{
-    auto & p = h.promise();
-    auto goal = p.goal;
-    assert(goal);
-    goal->trace("in final_awaiter");
-    auto c = std::move(p.continuation);
-
-    if (c) {
-        // We still have a continuation, i.e. work to do.
-        // We assert that the goal is still busy.
-        assert(goal->exitCode == ecBusy);
-        assert(goal->top_co);              // Goal must have an active coroutine.
-        assert(goal->top_co->handle == h); // The active coroutine must be us.
-        assert(p.alive);                   // We must not have been destructed.
-
-        // we move continuation to the top,
-        // note: previous top_co is actually h, so by moving into it,
-        // we're calling the destructor on h, DON'T use h and p after this!
-
-        // We move our continuation into `top_co`, i.e. the marker for the active continuation.
-        // By doing this we destruct the old `top_co`, i.e. us, so `h` can't be used anymore.
-        // Be careful not to access freed memory!
-        goal->top_co = std::move(c);
-
-        // We resume `top_co`.
-        return goal->top_co->handle;
-    } else {
-        // We have no continuation, i.e. no more work to do,
-        // so the goal must not be busy anymore.
-        assert(goal->exitCode != ecBusy);
-
-        // We reset `top_co` for good measure.
-        p.goal->top_co = {};
-
-        // We jump to the noop coroutine, which doesn't do anything and immediately suspends.
-        // This passes control back to the caller of goal.work().
-        return std::noop_coroutine();
+    try {
+        std::rethrow_exception(ex);
+    } catch (const nix::Error & e) {
+        /* We have the minor annoyance of modifying exceptions when unwinding
+           (for adding more context). This is the workaround. Could be useful
+           for having more structured traces of failed builds. */
+        e.throwClone();
     }
-}
-
-void promise_type::return_value(Co && next)
-{
-    goal->trace("return_value(Co&&)");
-    // Save old continuation.
-    auto old_continuation = std::move(continuation);
-    // We set next as our continuation.
-    continuation = std::move(next);
-    // We set next's goal, and thus it must not have one already.
-    assert(!continuation->handle.promise().goal);
-    continuation->handle.promise().goal = goal;
-    // Nor can next have a continuation, as we set it to our old one.
-    assert(!continuation->handle.promise().continuation);
-    continuation->handle.promise().continuation = std::move(old_continuation);
-}
-
-std::coroutine_handle<> nix::Goal::Co::await_suspend(handle_type caller)
-{
-    assert(handle); // we must be a valid coroutine
-    auto & p = handle.promise();
-    assert(!p.continuation); // we must have no continuation
-    assert(!p.goal);         // we must not have a goal yet
-    auto goal = caller.promise().goal;
-    assert(goal);
-    p.goal = goal;
-    p.continuation = std::move(goal->top_co); // we set our continuation to be top_co (i.e. caller)
-    goal->top_co = std::move(*this);          // we set top_co to ourselves, don't use this anymore after this!
-    return p.goal->top_co->handle;            // we execute ourselves
+    /* Everything else just propagates. */
 }
 
 bool CompareGoalPtrs::operator()(const GoalPtr & a, const GoalPtr & b) const
@@ -177,154 +60,197 @@ void addToWeakGoals(WeakGoals & goals, GoalPtr p)
     goals.insert(p);
 }
 
-Co Goal::await(Goals new_waitees)
+void Goal::maybeSpawnLazily()
 {
-    assert(waitees.empty());
-    if (!new_waitees.empty()) {
-        waitees = std::move(new_waitees);
-        for (auto waitee : waitees) {
-            addToWeakGoals(waitee->waiters, shared_from_this());
-        }
-        co_await Suspend{};
-        assert(waitees.empty());
+    /* Launch work only once, and only when actually requested. */
+    if (std::exchange(spawned, true))
+        return;
+
+    asio::co_spawn(
+        worker.ex,
+        run(),
+        asio::bind_cancellation_slot(
+            cancelSignal.slot(), [self = shared_from_this()](std::exception_ptr ex) { self->finish(ex); }));
+}
+
+void Goal::finish(std::exception_ptr ex)
+{
+    assert(!error);
+
+    bool wasCancelled = ex && isCancellationException(ex);
+
+    /* Stash the exception internally (unless cancelled) so that waiters are
+       aware of it. */
+    if (ex && !wasCancelled)
+        error = ex;
+
+    /* Log the failure if we have one and shouldn't preserve it.
+       Only log for actual failures (ecFailed), not for ecNoSubstituters
+       which indicates "couldn't substitute, will try building" - that's
+       expected behavior, not an error. */
+    if (const auto * failure = buildResult.tryGetFailure();
+        exitCode == ecFailed && failure && !preserveFailure && !waiters.empty())
+        logError(failure->info());
+
+    for (auto && waiter : std::exchange(waiters, {}))
+        /* Would be nicer to return pass a borrowed BuildResult (or nullopt if cancelled) to the handlers. */
+        asio::post(worker.ex, [completionHandler = std::move(waiter)]() mutable {
+            (std::move(completionHandler))(boost::system::error_code{});
+        });
+
+    /* Clean up the weak pointer. */
+    worker.removeGoal(shared_from_this());
+}
+
+asio::awaitable<void> Goal::join(GoalPtr goal)
+{
+    goal->maybeSpawnLazily();
+
+    if (goal->exitCode != ecBusy)
+        co_return;
+
+    /* TODO: Maybe deduplicate this code somewhere? */
+    if (goal->error) {
+        assert(goal->isDone());
+        rethrowMaybeCopyOfException(goal->error);
     }
-    co_return Return{};
+
+    ++goal->numWaiters;
+
+    Finally cleanup([&goal]() {
+        if (--goal->numWaiters == 0 && goal->exitCode == ecBusy && !goal->error)
+            goal->cancelSignal.emit(asio::cancellation_type::terminal);
+    });
+
+    auto cs = co_await asio::this_coro::cancellation_state;
+    if (cs.cancelled() != asio::cancellation_type::none)
+        throw boost::system::system_error(asio::error::operation_aborted);
+
+    /* Initiate an async op that will complete once the awaited-for Goal completes or
+       throws an exception. Awaiting will throw on cancellation or failures. */
+    co_await asio::async_initiate<decltype(asio::use_awaitable), void(boost::system::error_code)>(
+        [&](auto handler) {
+            using Handler = std::decay_t<decltype(handler)>;
+            auto state = std::make_shared<std::optional<Handler>>(std::move(handler));
+            auto slot = asio::get_associated_cancellation_slot(**state);
+
+            /* This is the completion handler that will be posted by the waitee upon
+               completion. */
+            goal->waiters.push_back([state](boost::system::error_code ec) {
+                if (auto h = std::exchange(*state, std::nullopt))
+                    (*std::move(h))(ec);
+            });
+
+            if (slot.is_connected())
+                slot.assign([state, ex = goal->worker.ex](asio::cancellation_type) {
+                    if (auto h = std::exchange(*state, std::nullopt))
+                        asio::post(ex, [h = std::move(*h)]() mutable { std::move(h)(boost::system::error_code(asio::error::operation_aborted)); });
+                });
+        },
+        asio::use_awaitable);
+
+    /* TODO: Maybe deduplicate this code somewhere? */
+    if (goal->error) {
+        assert(goal->isDone());
+        rethrowMaybeCopyOfException(goal->error);
+    }
+
+    co_return;
 }
 
-Goal::Done Goal::doneSuccess(BuildResult::Success success)
+asio::awaitable<void> Goal::join(Goals goals, bool keepGoing)
 {
+    if (goals.empty())
+        co_return;
+
+    auto ex = co_await asio::this_coro::executor;
+
+    std::list<asio::cancellation_signal> cancelSignal;
+    size_t pending = goals.size();
+    std::exception_ptr error;
+
+    co_await asio::async_initiate<decltype(asio::use_awaitable), void()>(
+        [&](auto handler) {
+            auto done = std::make_shared<decltype(handler)>(std::move(handler));
+
+            /* Cancel all waitees if we are cancelled. */
+            if (auto slot = asio::get_associated_cancellation_slot(*done); slot.is_connected())
+                slot.assign([&cancelSignal](asio::cancellation_type ct) {
+                    for (auto & s : cancelSignal)
+                        s.emit(ct);
+                });
+
+            for (auto & goal : goals) {
+                auto & stop = cancelSignal.emplace_back();
+                asio::co_spawn(
+                    ex,
+                    join(goal),
+                    asio::bind_cancellation_slot(
+                        stop.slot(), [goal, &cancelSignal, &pending, &error, keepGoing, done](std::exception_ptr ex) {
+                            /* Do nothing if we are just cancelled. */
+                            bool realError = ex && !isCancellationException(ex);
+                            if (realError && !error)
+                                error = ex;
+                            /* Without --keep-going, we cancel all other goals on first error. */
+                            if (!keepGoing && (realError || goal->exitCode == ecFailed))
+                                for (auto & s : cancelSignal)
+                                    s.emit(asio::cancellation_type::terminal);
+                            /* The last completion handler will complete the whole async op. */
+                            if (--pending == 0)
+                                (*done)();
+                        }));
+            }
+        },
+        asio::use_awaitable);
+
+    if (error)
+        rethrowMaybeCopyOfException(error);
+
+    auto cs = co_await asio::this_coro::cancellation_state;
+    if (cs.cancelled() != asio::cancellation_type::none)
+        throw boost::system::system_error(asio::error::operation_aborted);
+}
+
+asio::awaitable<void> Goal::await(Goals waitees)
+{
+    co_await join(waitees, worker.settings.keepGoing);
+
+    for (auto & w : waitees)
+        switch (w->exitCode) {
+        case ecFailed:
+            ++nrFailed;
+            break;
+        case ecNoSubstituters:
+            ++nrFailed;
+            ++nrNoSubstituters;
+            break;
+        case ecBusy:
+        case ecSuccess:
+        default:
+            break;
+        }
+}
+
+void Goal::doneSuccess(BuildResult::Success success)
+{
+    assert(!isDone());
     buildResult.inner = std::move(success);
-    return amDone(ecSuccess);
+    exitCode = ExitCode::ecSuccess;
+    trace("done (success)");
 }
 
-Goal::Done Goal::doneFailure(ExitCode result, BuildResult::Failure failure)
+void Goal::doneFailure(ExitCode result, BuildResult::Failure failure)
 {
+    assert(!isDone());
     assert(result == ecFailed || result == ecNoSubstituters);
     buildResult.inner = std::move(failure);
-    return amDone(result);
-}
-
-Goal::Done Goal::amDone(ExitCode result)
-{
-    trace("done");
-    assert(top_co);
-    assert(exitCode == ecBusy);
-    assert(result == ecSuccess || result == ecFailed || result == ecNoSubstituters);
     exitCode = result;
-
-    // Log the failure if we have one and shouldn't preserve it.
-    // Only log for actual failures (ecFailed), not for ecNoSubstituters
-    // which indicates "couldn't substitute, will try building" - that's
-    // expected behavior, not an error.
-    if (result == ecFailed) {
-        if (auto * failure = buildResult.tryGetFailure()) {
-            if (!preserveFailure && !waiters.empty())
-                logError(failure->info());
-        }
-    }
-
-    for (auto & i : waiters) {
-        GoalPtr goal = i.lock();
-        if (goal) {
-            auto me = shared_from_this();
-            assert(goal->waitees.count(me));
-            goal->waitees.erase(me);
-
-            goal->trace(fmt("waitee '%s' done; %d left", name, goal->waitees.size()));
-
-            if (result == ecFailed || result == ecNoSubstituters)
-                ++goal->nrFailed;
-
-            if (result == ecNoSubstituters)
-                ++goal->nrNoSubstituters;
-
-            if (goal->waitees.empty()) {
-                worker.wakeUp(goal);
-            } else if (result == ecFailed && !worker.settings.keepGoing) {
-                /* If we failed and keepGoing is not set, we remove all
-                   remaining waitees. */
-                for (auto & g : goal->waitees) {
-                    g->waiters.erase(goal);
-                }
-                goal->waitees.clear();
-
-                worker.wakeUp(goal);
-            }
-        }
-    }
-    waiters.clear();
-    worker.removeGoal(shared_from_this());
-
-    cleanup();
-
-    // We drop the continuation.
-    // In `final_awaiter` this will signal that there is no more work to be done.
-    top_co->handle.promise().continuation = {};
-
-    // won't return to caller because of logic in final_awaiter
-    return Done{};
+    trace("done (failure)");
 }
 
 void Goal::trace(std::string_view s)
 {
     debug("%1%: %2%", name, s);
-}
-
-void Goal::work()
-{
-    assert(top_co);
-    assert(top_co->handle);
-    assert(top_co->handle.promise().alive);
-    top_co->handle.resume();
-    // We either should be in a state where we can be work()-ed again,
-    // or we should be done.
-    assert(top_co || exitCode != ecBusy);
-}
-
-void Goal::handleChildOutput(Descriptor fd, std::string_view data)
-{
-    childEvents.pushChildEvent(ChildOutput{fd, std::string{data}});
-    worker.wakeUp(shared_from_this());
-}
-
-void Goal::handleEOF(Descriptor fd)
-{
-    childEvents.pushChildEvent(ChildEOF{fd});
-    worker.wakeUp(shared_from_this());
-}
-
-void Goal::timedOut(TimedOut && ex)
-{
-    childEvents.pushChildEvent(std::move(ex));
-    worker.wakeUp(shared_from_this());
-}
-
-Goal::Co Goal::yield()
-{
-    worker.wakeUp(shared_from_this());
-    co_await Suspend{};
-    co_return Return{};
-}
-
-Goal::Co Goal::waitForAWhile()
-{
-    worker.waitForAWhile(shared_from_this());
-    co_await Suspend{};
-    co_return Return{};
-}
-
-Goal::Co Goal::waitUntilWoken()
-{
-    worker.waitForCompletion(shared_from_this());
-    co_await Suspend{};
-    co_return Return{};
-}
-
-Goal::Co Goal::waitForBuildSlot()
-{
-    worker.waitForBuildSlot(shared_from_this());
-    co_await Suspend{};
-    co_return Return{};
 }
 
 } // namespace nix

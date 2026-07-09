@@ -689,10 +689,11 @@ Goal::Co DerivationBuildingGoal::buildWithHook(
     /* Create the log file and pipe. */
     std::unique_ptr<LogFile> logFile = std::make_unique<LogFile>(worker.store, drvPath, settings.getLogFileSettings());
 
-    std::set<MuxablePipePollState::CommChannel> fds;
+#  if 0
     fds.insert(hook->fromHook.readSide.get());
     fds.insert(hook->builderOut.readSide.get());
     worker.childStarted(shared_from_this(), fds, false, false);
+#  endif
 
     buildResult.startTime = time(nullptr); // inexact
 
@@ -1298,7 +1299,7 @@ LogFile::~LogFile()
     }
 }
 
-Goal::Done DerivationBuildingGoal::doneFailureLogTooLong(BuildLog & buildLog)
+void DerivationBuildingGoal::doneFailureLogTooLong(BuildLog & buildLog)
 {
     return doneFailure(BuildError(
         BuildResult::Failure::LogLimitExceeded,

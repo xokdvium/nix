@@ -7,7 +7,6 @@
 #include "nix/store/store-api.hh"
 #include "nix/store/build/goal.hh"
 #include "nix/store/realisation.hh"
-#include "nix/util/muxable-pipe.hh"
 
 namespace nix {
 

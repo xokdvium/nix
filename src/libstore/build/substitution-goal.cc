@@ -303,17 +303,4 @@ Goal::Co PathSubstitutionGoal::tryToRun(
     co_return doneSuccess(BuildResult::Success{.status = BuildResult::Success::Substituted});
 }
 
-void PathSubstitutionGoal::cleanup()
-{
-    try {
-        if (thr.joinable()) {
-            // FIXME: signal worker thread to quit.
-            thr.join();
-            worker.childTerminated(this, JobCategory::Substitution);
-        }
-    } catch (...) {
-        ignoreExceptionInDestructor();
-    }
-}
-
 } // namespace nix
