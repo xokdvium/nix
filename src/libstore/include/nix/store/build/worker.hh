@@ -8,6 +8,10 @@
 #include "nix/store/build-result.hh"
 #include "nix/store/realisation.hh"
 #include "nix/util/muxable-pipe.hh"
+#include "nix/util/async.hh"
+
+#include <boost/asio/strand.hpp>
+#include <boost/asio/experimental/channel.hpp>
 
 #include <functional>
 #include <future>
@@ -15,6 +19,71 @@
 #include <queue>
 
 namespace nix {
+
+class AsyncSemaphore
+{
+    asio::experimental::channel<asio::any_io_executor, void(boost::system::error_code, int)> channel;
+
+    void release()
+    {
+        channel.try_send(boost::system::error_code{}, 42);
+    }
+
+public:
+    AsyncSemaphore(asio::any_io_executor ex, std::size_t initialCount)
+        : channel(ex, initialCount)
+    {
+        channel.try_send_n(initialCount, boost::system::error_code{}, 42);
+    }
+
+    struct Handle
+    {
+        friend class AsyncSemaphore;
+        AsyncSemaphore * sem = nullptr;
+
+        Handle(AsyncSemaphore & sem)
+            : sem(&sem)
+        {
+        }
+
+    public:
+
+        Handle(Handle && other) noexcept
+            : sem(std::exchange(other.sem, nullptr))
+        {
+        }
+
+        Handle & operator=(Handle && other) noexcept
+        {
+            if (this == &other)
+                return *this;
+            if (sem) {
+                sem->release();
+                sem = nullptr;
+            }
+            sem = std::exchange(other.sem, nullptr);
+            return *this;
+        }
+
+        Handle(const Handle &);
+
+        Handle & operator=(const Handle &) = delete;
+
+        ~Handle()
+        {
+            if (sem) {
+                sem->release();
+                sem = nullptr;
+            }
+        }
+    };
+
+    asio::awaitable<Handle> asyncAcquire()
+    {
+        co_await channel.async_receive(asio::use_awaitable);
+        co_return Handle(*this);
+    }
+};
 
 /* Forward definition. */
 struct WorkerSettings;
@@ -72,10 +141,32 @@ struct HookInstance;
  */
 class Worker
 {
+public:
+    const WorkerSettings & settings;
+
 private:
 
     /* Note: the worker should only have strong pointers to the
        top-level goals. */
+
+    /* TODO: Once we are more done with asyncification, this should be
+       be gone and the executer should be a strand on a shared event loop. */
+    asio::io_context ioContext;
+
+    /**
+     * Executer on which all the coroutines are run.
+     */
+    asio::strand<asio::any_io_executor> ex = asio::make_strand(ioContext.get_executor());
+
+    /**
+     * Semaphore limiting acquired build slots.
+     */
+    AsyncSemaphore buildSemaphore;
+
+    /**
+     * Semaphore limiting acquired substitution slots.
+     */
+    AsyncSemaphore substitutionSemaphore;
 
     /**
      * The top-level goals of the worker.
@@ -199,7 +290,6 @@ public:
 
     Store & store;
     Store & evalStore;
-    const WorkerSettings & settings;
 
     /**
      * Function to get the substituters to use for path substitution.

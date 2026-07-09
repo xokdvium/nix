@@ -18,7 +18,10 @@ namespace nix {
 
 Worker::Worker(Store & store, Store & evalStore)
     /* Can't use make_ref, because the constructor is private. */
-    : wakerState(ref<Waker>(new Waker{}))
+    : settings(nix::settings.getWorkerSettings())
+    , buildSemaphore(ex, settings.maxBuildJobs)
+    , substitutionSemaphore(ex, std::max<std::size_t>(settings.maxSubstitutionJobs, 1))
+    , wakerState(ref<Waker>(new Waker{}))
     , act(*logger, actRealise)
     , actDerivations(*logger, actBuilds)
     , actSubstitutions(*logger, actCopyPaths)
@@ -27,7 +30,6 @@ Worker::Worker(Store & store, Store & evalStore)
 #endif
     , store(store)
     , evalStore(evalStore)
-    , settings(nix::settings.getWorkerSettings())
     , getSubstituters{[] {
         return nix::settings.getWorkerSettings().useSubstitutes ? getDefaultSubstituters() : std::list<ref<Store>>{};
     }}
