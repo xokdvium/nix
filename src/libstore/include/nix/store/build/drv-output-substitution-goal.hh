@@ -40,7 +40,7 @@ public:
      */
     std::shared_ptr<const UnkeyedRealisation> outputInfo;
 
-    Co init();
+    asio::awaitable<void> init();
 
     std::string key() override;
 

@@ -10,6 +10,7 @@
 #include "nix/util/async.hh"
 
 #include <boost/asio/strand.hpp>
+#include <boost/asio/thread_pool.hpp>
 #include <boost/asio/experimental/channel.hpp>
 
 #include <functional>
@@ -138,14 +139,9 @@ private:
     asio::strand<asio::any_io_executor> ex = asio::make_strand(ioContext.get_executor());
 
     /**
-     * Semaphore limiting acquired build slots.
+     * Thread pool to run blocking work on.
      */
-    AsyncSemaphore buildSemaphore;
-
-    /**
-     * Semaphore limiting acquired substitution slots.
-     */
-    AsyncSemaphore substitutionSemaphore;
+    asio::thread_pool threadPool;
 
     /**
      * The top-level goals of the worker.
@@ -171,6 +167,21 @@ private:
     std::map<StorePath, bool> pathContentsGoodCache;
 
 public:
+
+    auto & getThreadPool()
+    {
+        return threadPool;
+    }
+
+    /**
+     * Semaphore limiting acquired build slots.
+     */
+    AsyncSemaphore buildSemaphore;
+
+    /**
+     * Semaphore limiting acquired substitution slots.
+     */
+    AsyncSemaphore substitutionSemaphore;
 
     const Activity act;
     const Activity actDerivations;
@@ -275,6 +286,8 @@ public:
      * Remove a dead goal.
      */
     void removeGoal(GoalPtr goal);
+
+    asio::awaitable<void> awaitTopGoals();
 
     /**
      * Loop until the specified top-level goals have finished.

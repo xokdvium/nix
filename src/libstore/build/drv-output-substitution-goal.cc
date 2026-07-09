@@ -14,7 +14,7 @@ DrvOutputSubstitutionGoal::DrvOutputSubstitutionGoal(const DrvOutput & id, Worke
     trace("created");
 }
 
-Goal::Co DrvOutputSubstitutionGoal::init()
+asio::awaitable<void> DrvOutputSubstitutionGoal::init()
 {
     trace("init");
 
@@ -31,7 +31,7 @@ Goal::Co DrvOutputSubstitutionGoal::init()
         trace("trying next substituter");
 
         try {
-            outputInfo = co_await AsyncCallback<std::shared_ptr<const UnkeyedRealisation>>(
+            outputInfo = co_await callbackToAwaitable<std::shared_ptr<const UnkeyedRealisation>>(
                 [sub, id = this->id](auto cb) { sub->queryRealisation(id, std::move(cb)); });
         } catch (std::exception & e) {
             printError(e.what());

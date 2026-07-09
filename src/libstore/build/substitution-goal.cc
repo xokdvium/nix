@@ -9,6 +9,22 @@
 
 namespace nix {
 
+/* FIXME: Deduplicate this please. */
+static bool isCancellationException(std::exception_ptr ex)
+{
+    try {
+        std::rethrow_exception(ex);
+    } catch (const Interrupted &) {
+        return true;
+    } catch (const Cancelled &) {
+        return true;
+    } catch (const boost::system::system_error & e) {
+        return e.code() == asio::error::operation_aborted;
+    } catch (...) {
+        return false;
+    }
+}
+
 PathSubstitutionGoal::PathSubstitutionGoal(
     const StorePath & storePath, Worker & worker, RepairFlag repair, std::optional<ContentAddress> ca)
     : Goal(worker, init())
@@ -21,12 +37,9 @@ PathSubstitutionGoal::PathSubstitutionGoal(
     maintainExpectedSubstitutions = std::make_unique<MaintainCount<uint64_t>>(worker.expectedSubstitutions);
 }
 
-PathSubstitutionGoal::~PathSubstitutionGoal()
-{
-    cleanup();
-}
+PathSubstitutionGoal::~PathSubstitutionGoal() {}
 
-Goal::Co PathSubstitutionGoal::init()
+asio::awaitable<void> PathSubstitutionGoal::init()
 {
     trace("init");
 
@@ -53,8 +66,6 @@ Goal::Co PathSubstitutionGoal::init()
             lastStoresException.reset();
         }
 
-        cleanup();
-
         /* The path the substituter refers to the path as. This will be
          * different when the stores have different names. */
         std::optional<StorePath> subPath;
@@ -72,7 +83,7 @@ Goal::Co PathSubstitutionGoal::init()
         }
 
         try {
-            info = co_await AsyncCallback<ref<const ValidPathInfo>>(
+            info = co_await callbackToAwaitable<ref<const ValidPathInfo>>(
                 [sub, path = subPath.value_or(storePath)](auto cb) { sub->queryPathInfo(path, std::move(cb)); });
         } catch (InvalidPath &) {
             continue;
@@ -134,6 +145,8 @@ Goal::Co PathSubstitutionGoal::init()
         // FIXME: consider returning boolean instead of passing in reference
         bool out = false; // is mutated by tryToRun
         co_await tryToRun(subPath ? *subPath : storePath, sub, info, out);
+        if (isDone())
+            co_return;
         substituterFailed = substituterFailed || out;
     }
 
@@ -164,7 +177,7 @@ Goal::Co PathSubstitutionGoal::init()
         }});
 }
 
-Goal::Co PathSubstitutionGoal::tryToRun(
+asio::awaitable<void> PathSubstitutionGoal::tryToRun(
     StorePath subPath, nix::ref<Store> sub, std::shared_ptr<const ValidPathInfo> info, bool & substituterFailed)
 {
     trace("all references realised");
@@ -190,94 +203,53 @@ Goal::Co PathSubstitutionGoal::tryToRun(
             }
         }
 
-    co_await yield();
-
     trace("trying to run");
 
     /* Make sure that we are allowed to start a substitution.  Note that even
        if maxSubstitutionJobs == 0, we still allow a substituter to run. This
        prevents infinite waiting. */
-    while (worker.getNrSubstitutions() >= std::max(1U, (unsigned int) worker.settings.maxSubstitutionJobs)) {
-        co_await waitForBuildSlot();
-    }
+    auto slot = co_await worker.substitutionSemaphore.asyncAcquire();
 
     auto maintainRunningSubstitutions = std::make_unique<MaintainCount<uint64_t>>(worker.runningSubstitutions);
     worker.updateProgress();
 
-    auto promise = std::promise<void>();
-    auto future = promise.get_future();
-
-    /* Be careful with ownership. cleanup() doesn't signal the worker thread
-       to cleanly shutdown, so the worker can die while the thread is still
-       running. That's why we use weak_ptr for everything that is owned by the
-       Worker. */
-    thr = std::thread([weakGoal = weak_from_this(),
-                       promise = std::move(promise),
-                       subPath,
-                       storePath = storePath,
-                       repair = repair,
-                       sub,
-                       maybeWaker = worker.getCrossThreadWaker(),
-                       maybeWorkerStore = worker.store.weak_from_this()]() mutable {
-        try {
-            ReceiveInterrupts receiveInterrupts;
-
-            /* The Worker might have died while we were starting up. */
-            auto workerStore = maybeWorkerStore.lock();
-            if (!workerStore)
-                return;
-
-            Activity act(
-                *logger,
-                actSubstitute,
-                Logger::Fields{workerStore->printStorePath(storePath), sub->config.getHumanReadableURI()});
-            PushActivity pact(act.id);
-
-            copyStorePath(*sub, *workerStore, subPath, repair, sub->config.isTrusted ? NoCheckSigs : CheckSigs);
-
-            promise.set_value();
-        } catch (...) {
-            promise.set_exception(std::current_exception());
-        }
-
-        /* The Worker might have already died (and the waker with it) by the
-           time we finished. N.B. if enqueueing to the waker throws, we better
-           std::terminate, since something has gone very wrong. This intentionally
-           lets the thread crash on exceptions for that reason. */
-        if (auto waker = maybeWaker.lock())
-            waker->enqueue(weakGoal);
-    });
-
-    /* Use up the substitution slot. */
-    worker.childStarted(shared_from_this(), /*channels=*/{}, /*inBuildSlot=*/true, /*respectTimeouts=*/false);
-    /* Suspend until the thread finishes. */
-    co_await waitUntilWoken();
-
-    trace("substitute finished");
-
-    thr.join();
-    worker.childTerminated(this);
+    bool substituteGone = false;
 
     try {
-        future.get();
-    } catch (std::exception & e) {
         /* Cause the parent build to fail unless --fallback is given,
            or the substitute has disappeared. The latter case behaves
            the same as the substitute never having existed in the
            first place. */
-        try {
+        co_await asio::co_spawn(
+            worker.getThreadPool(),
+            [this, subPath, sub]() -> asio::awaitable<void> {
+                /* TODO: Handle cancellations please. */
+                ReceiveInterrupts receiveInterrupts;
+                Activity act(
+                    *logger,
+                    actSubstitute,
+                    Logger::Fields{worker.store.printStorePath(storePath), sub->config.getHumanReadableURI()});
+                PushActivity pact(act.id);
+                copyStorePath(*sub, worker.store, subPath, repair, sub->config.isTrusted ? NoCheckSigs : CheckSigs);
+                co_return;
+            },
+            asio::use_awaitable);
+    } catch (SubstituteGone & sg) {
+        /* Missing NARs are expected when they've been garbage collected.
+           This is not a failure, so log as a warning instead of an error. */
+        logWarning({.msg = sg.info().msg});
+        substituteGone = true;
+    } catch (std::exception & e) {
+        if (isCancellationException(std::current_exception()))
             throw;
-        } catch (SubstituteGone & sg) {
-            /* Missing NARs are expected when they've been garbage collected.
-               This is not a failure, so log as a warning instead of an error. */
-            logWarning({.msg = sg.info().msg});
-        } catch (...) {
-            printError(e.what());
-            substituterFailed = true;
-        }
-
-        co_return Return{};
+        printError(e.what());
+        substituterFailed = true;
     }
+
+    trace("substitute finished");
+
+    if (substituteGone || substituterFailed)
+        co_return;
 
     worker.markContentsGood(storePath);
 

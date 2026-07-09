@@ -22,11 +22,6 @@ struct PathSubstitutionGoal : public Goal
      */
     RepairFlag repair;
 
-    /**
-     * The substituter thread.
-     */
-    std::thread thr;
-
     std::unique_ptr<MaintainCount<uint64_t>> maintainExpectedSubstitutions, maintainRunningSubstitutions,
         maintainExpectedNar, maintainExpectedDownload;
 
@@ -51,11 +46,11 @@ public:
     /**
      * The states.
      */
-    Co init();
-    Co gotInfo();
-    Co tryToRun(
+    asio::awaitable<void> init();
+    asio::awaitable<void> gotInfo();
+    asio::awaitable<void> tryToRun(
         StorePath subPath, nix::ref<Store> sub, std::shared_ptr<const ValidPathInfo> info, bool & substituterFailed);
-    Co finished();
+    asio::awaitable<void> finished();
 
     JobCategory jobCategory() const override
     {

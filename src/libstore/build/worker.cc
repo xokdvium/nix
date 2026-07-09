@@ -14,14 +14,33 @@
 #include "nix/util/signals.hh"
 #include "nix/store/globals.hh"
 
+#include <boost/asio/bind_cancellation_slot.hpp>
+#include <boost/asio/steady_timer.hpp>
+#include <boost/asio/signal_set.hpp>
+
 namespace nix {
+
+/* FIXME: Dedup a lot. */
+static bool isCancellationException(std::exception_ptr ex)
+{
+    try {
+        std::rethrow_exception(ex);
+    } catch (const Interrupted &) {
+        return true;
+    } catch (const Cancelled &) {
+        return true;
+    } catch (const boost::system::system_error & e) {
+        return e.code() == asio::error::operation_aborted;
+    } catch (...) {
+        return false;
+    }
+}
 
 Worker::Worker(Store & store, Store & evalStore)
     /* Can't use make_ref, because the constructor is private. */
     : settings(nix::settings.getWorkerSettings())
     , buildSemaphore(ex, settings.maxBuildJobs)
     , substitutionSemaphore(ex, std::max<std::size_t>(settings.maxSubstitutionJobs, 1))
-    , wakerState(ref<Waker>(new Waker{}))
     , act(*logger, actRealise)
     , actDerivations(*logger, actBuilds)
     , actSubstitutions(*logger, actCopyPaths)
@@ -31,9 +50,6 @@ Worker::Worker(Store & store, Store & evalStore)
         return nix::settings.getWorkerSettings().useSubstitutes ? getDefaultSubstituters() : std::list<ref<Store>>{};
     }}
 {
-    nrLocalBuilds = 0;
-    nrSubstitutions = 0;
-    lastWokenUp = steady_time_point::min();
 }
 
 Worker::~Worker()
@@ -169,51 +185,32 @@ void Worker::removeGoal(GoalPtr goal)
     }
 }
 
-void Worker::wakeUp(GoalPtr goal)
+asio::awaitable<void> Worker::awaitTopGoals()
 {
-    goal->trace("woken up");
-    addToWeakGoals(awake, goal);
-}
-
-size_t Worker::getNrLocalBuilds()
-{
-    return nrLocalBuilds;
-}
-
-size_t Worker::getNrSubstitutions()
-{
-    return nrSubstitutions;
-}
-
-void Worker::childStarted(
-    GoalPtr goal, const std::set<MuxablePipePollState::CommChannel> & channels, bool inBuildSlot, bool respectTimeouts)
-{
-    Child child;
-    child.goal = goal;
-    child.goal2 = goal.get();
-    child.channels = channels;
-    child.timeStarted = child.lastOutput = steady_time_point::clock::now();
-    child.inBuildSlot = inBuildSlot;
-    child.respectTimeouts = respectTimeouts;
-    children.emplace_back(child);
-    if (inBuildSlot) {
-        switch (goal->jobCategory()) {
-        case JobCategory::Substitution:
-            nrSubstitutions++;
-            break;
-        case JobCategory::Build:
-            nrLocalBuilds++;
-            break;
-        case JobCategory::Administration:
-        default:
-            /* Doesn't make sense, since there are only building and substitution slots. */
-            unreachable();
-        }
-    }
+    co_await Goal::join(topGoals, settings.keepGoing);
 }
 
 void Worker::run(const Goals & _topGoals)
 {
+    for (auto & goal : _topGoals)
+        topGoals.insert(goal);
+
+    std::exception_ptr runError;
+    asio::cancellation_signal interrupted;
+
+    auto callback = createInterruptCallback(
+        [&]() { asio::post(ex, [&interrupted] { interrupted.emit(asio::cancellation_type::terminal); }); });
+
+    asio::co_spawn(ex, awaitTopGoals(), asio::bind_cancellation_slot(interrupted.slot(), [&](std::exception_ptr e) {
+                       if (e && !isCancellationException(e))
+                           runError = e;
+                   }));
+
+    ioContext.run();
+
+    checkInterrupt();
+    if (runError)
+        std::rethrow_exception(runError);
 }
 
 bool Worker::pathContentsGood(const StorePath & path)

@@ -115,9 +115,9 @@ private:
      */
     std::pair<bool, SingleDrvOutputs> checkPathValidity(std::map<std::string, InitialOutput> & initialOutputs);
 
-    Done doneSuccess(BuildResult::Success::Status status, SingleDrvOutputs builtOutputs);
+    void doneSuccess(BuildResult::Success::Status status, SingleDrvOutputs builtOutputs);
 
-    Done doneFailure(BuildError ex);
+    void doneFailure(BuildError ex);
 
     BuildError fixupBuilderFailureErrorMessage(BuilderFailureError msg, BuildLog & buildLog);
 

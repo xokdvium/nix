@@ -138,7 +138,7 @@ asio::awaitable<void> DerivationGoal::haveDerivation(bool storeDerivation)
             co_return doneSuccess(BuildResult::Success::Substituted, checkResult->first);
         }
         if (buildMode == bmRepair && allValid) {
-            co_return repairClosure();
+            co_return co_await repairClosure();
         }
         if (buildMode == bmCheck && !allValid)
             throw Error(
@@ -274,7 +274,7 @@ asio::awaitable<void> DerivationGoal::haveDerivation(bool storeDerivation)
     co_return amDone(g->exitCode);
 }
 
-Goal::Co DerivationGoal::repairClosure()
+asio::awaitable<void> DerivationGoal::repairClosure()
 {
     assert(!drv->type().isImpure());
 
@@ -422,7 +422,7 @@ UnkeyedRealisation DerivationGoal::assertPathValidity()
     return checkResult->first;
 }
 
-Goal::Done DerivationGoal::doneSuccess(BuildResult::Success::Status status, UnkeyedRealisation builtOutput)
+void DerivationGoal::doneSuccess(BuildResult::Success::Status status, UnkeyedRealisation builtOutput)
 {
     mcExpectedBuilds.reset();
 
@@ -438,7 +438,7 @@ Goal::Done DerivationGoal::doneSuccess(BuildResult::Success::Status status, Unke
         });
 }
 
-Goal::Done DerivationGoal::doneFailure(BuildError ex)
+void DerivationGoal::doneFailure(BuildError ex)
 {
     mcExpectedBuilds.reset();
 

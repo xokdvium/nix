@@ -71,7 +71,7 @@ private:
     /**
      * The states.
      */
-    Co resolveDerivation();
+    asio::awaitable<void> resolveDerivation();
 
     JobCategory jobCategory() const override
     {

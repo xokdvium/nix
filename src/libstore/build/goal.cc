@@ -3,6 +3,7 @@
 #include "nix/store/worker-settings.hh"
 
 #include <boost/asio/bind_cancellation_slot.hpp>
+#include <boost/asio/steady_timer.hpp>
 
 namespace nix {
 
@@ -144,7 +145,9 @@ asio::awaitable<void> Goal::join(GoalPtr goal)
             if (slot.is_connected())
                 slot.assign([state, ex = goal->worker.ex](asio::cancellation_type) {
                     if (auto h = std::exchange(*state, std::nullopt))
-                        asio::post(ex, [h = std::move(*h)]() mutable { std::move(h)(boost::system::error_code(asio::error::operation_aborted)); });
+                        asio::post(ex, [h = std::move(*h)]() mutable {
+                            std::move(h)(boost::system::error_code(asio::error::operation_aborted));
+                        });
                 });
         },
         asio::use_awaitable);
@@ -231,6 +234,14 @@ asio::awaitable<void> Goal::await(Goals waitees)
         }
 }
 
+asio::awaitable<void> Goal::waitForAWhile()
+{
+    trace("wait for a while");
+    asio::steady_timer timer(co_await asio::this_coro::executor);
+    timer.expires_after(std::chrono::seconds(worker.settings.pollInterval));
+    co_await timer.async_wait(asio::use_awaitable);
+}
+
 void Goal::doneSuccess(BuildResult::Success success)
 {
     assert(!isDone());
@@ -246,6 +257,13 @@ void Goal::doneFailure(ExitCode result, BuildResult::Failure failure)
     buildResult.inner = std::move(failure);
     exitCode = result;
     trace("done (failure)");
+}
+
+void Goal::amDone(ExitCode result)
+{
+    assert(!isDone());
+    exitCode = result;
+    trace("done");
 }
 
 void Goal::trace(std::string_view s)

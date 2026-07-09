@@ -75,6 +75,8 @@ enum struct JobCategory {
 struct Goal : public std::enable_shared_from_this<Goal>
 {
 private:
+    friend class Worker;
+
     /* VTable anchor to avoid weak linkage of the vtable - it breaks
        dynamic_cast across shared libraries on Darwin. */
     virtual void anchor();
@@ -83,6 +85,12 @@ private:
      * Memoised result of key().
      */
     std::optional<std::string> cachedKey;
+
+    /**
+     * Top-level coroutine of this goal. Saved in a constructor and moved-from in
+     * run().
+     */
+    asio::awaitable<void> topCoroutine;
 
     /**
      * Cancellation signal connected to the cancellation slot of the top-level
@@ -115,14 +123,6 @@ private:
     }
 
     /**
-     * Whether the goal has run to completion.
-     */
-    bool isDone() const noexcept
-    {
-        return exitCode != ExitCode::ecBusy || error;
-    }
-
-    /**
      * Obtain the top-level coroutine that, when driven to completion, will
      * produce a BuildResult representing the result of "finishing" this goal.
      *
@@ -131,7 +131,10 @@ private:
      * @todo Ideally this would be an awaitable<BuildResult> and it wasn't
      * smuggled through a member.
      */
-    virtual asio::awaitable<void> run() = 0;
+    asio::awaitable<void> run()
+    {
+        return std::move(topCoroutine);
+    }
 
     /**
      * Await for the goal to complete.
@@ -191,6 +194,14 @@ public:
 
 protected:
     /**
+     * Whether the goal has run to completion.
+     */
+    bool isDone() const noexcept
+    {
+        return exitCode != ExitCode::ecBusy || error;
+    }
+
+    /**
      * Signals that the goal is done.
      * `co_return` the result. If you're not inside a coroutine, you can ignore
      * the return value safely.
@@ -215,20 +226,6 @@ protected:
      */
     void doneFailure(ExitCode result, BuildResult::Failure failure);
 
-    /**
-     * @brief Wait for a set of Goals.
-     *
-     * Awaiting on the resulting coroutine will suspend the caller until:
-     *
-     * - Without --keep-going, until all waitees complete successfully, or any one of them fails.
-     *   In the latter case, other waitees will be cancelled.
-     * - Otherwise until goals complete (successfully or with failures).
-     *
-     * If any goal throws an exception, we'll receive it and are expected to propagate it up
-     * the awaitable chain to the top level.
-     */
-    asio::awaitable<void> await(Goals waitees);
-
 public:
     /**
      * Hack to say that this goal should not log the failure, but instead keep
@@ -241,8 +238,9 @@ public:
      */
     bool preserveFailure = false;
 
-    Goal(Worker & worker)
-        : worker(worker)
+    Goal(Worker & worker, asio::awaitable<void> topCoroutine)
+        : topCoroutine(std::move(topCoroutine))
+        , worker(worker)
     {
     }
 
@@ -293,6 +291,27 @@ public:
      * @see JobCategory
      */
     virtual JobCategory jobCategory() const = 0;
+
+protected:
+    /**
+     * @brief Wait for a set of Goals.
+     *
+     * Awaiting on the resulting coroutine will suspend the caller until:
+     *
+     * - Without --keep-going, until all waitees complete successfully, or any one of them fails.
+     *   In the latter case, other waitees will be cancelled.
+     * - Otherwise until goals complete (successfully or with failures).
+     *
+     * If any goal throws an exception, we'll receive it and are expected to propagate it up
+     * the awaitable chain to the top level.
+     */
+    asio::awaitable<void> await(Goals waitees);
+
+    /**
+     * Awaiting on the resulting coroutine yields the goal for several seconds.
+     * Used for retrying goals blocked on acquiring lockfiles.
+     */
+    asio::awaitable<void> waitForAWhile();
 };
 
 void addToWeakGoals(WeakGoals & goals, GoalPtr p);

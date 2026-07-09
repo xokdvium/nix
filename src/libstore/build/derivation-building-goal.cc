@@ -144,7 +144,7 @@ static std::unique_ptr<PostBuildHookState> runPostBuildHook(
 
 /* At least one of the output paths could not be
    produced using a substitute.  So we have to build instead. */
-Goal::Co DerivationBuildingGoal::gaveUpOnSubstitution(bool storeDerivation)
+asio::awaitable<void> DerivationBuildingGoal::gaveUpOnSubstitution(bool storeDerivation)
 {
     Goals waitees;
 
@@ -184,7 +184,8 @@ Goal::Co DerivationBuildingGoal::gaveUpOnSubstitution(bool storeDerivation)
                 nrFailed,
                 nrFailed == 1 ? "dependency" : "dependencies");
         msg += showKnownOutputs(worker.store, *drv);
-        co_return doneFailure(BuildError(BuildResult::Failure::DependencyFailed, msg));
+        doneFailure(BuildError(BuildResult::Failure::DependencyFailed, msg));
+        co_return;
     }
 
     /* Gather information necessary for computing the closure and/or
@@ -241,8 +242,7 @@ Goal::Co DerivationBuildingGoal::gaveUpOnSubstitution(bool storeDerivation)
     /* Okay, try to build.  Note that here we don't wait for a build
        slot to become available, since we don't need one if there is a
        build hook. */
-    co_await yield();
-    co_return tryToBuild(std::move(inputPaths));
+    co_return co_await tryToBuild(std::move(inputPaths));
 }
 
 /**
@@ -334,7 +334,7 @@ static BuildError reject(const LocalBuildRejection & rejection, std::string_view
     return BuildError(BuildResult::Failure::InputRejected, std::move(msg));
 }
 
-Goal::Co DerivationBuildingGoal::tryToBuild(StorePathSet inputPaths)
+asio::awaitable<void> DerivationBuildingGoal::tryToBuild(StorePathSet inputPaths)
 {
     auto drvOptions = [&] {
         DerivationOptions<SingleDerivedPath> temp;
@@ -434,7 +434,7 @@ Goal::Co DerivationBuildingGoal::tryToBuild(StorePathSet inputPaths)
         return LocalBuildCapability{*localStoreP, ext};
     }();
 
-    auto acquireResources = [&](bool & done, PathLocks & outputLocks) -> Goal::Co {
+    auto acquireResources = [&](bool & done, PathLocks & outputLocks) -> asio::awaitable<void> {
         trace("trying to build");
 
         /**
@@ -496,7 +496,7 @@ Goal::Co DerivationBuildingGoal::tryToBuild(StorePathSet inputPaths)
             outputLocks.setDeletion(true);
             outputLocks.unlock();
             done = true;
-            co_return Return{};
+            co_return;
         }
 
         /* If any of the outputs already exist but are not valid, delete
@@ -511,10 +511,10 @@ Goal::Co DerivationBuildingGoal::tryToBuild(StorePathSet inputPaths)
             }
         }
 
-        co_return Return{};
+        co_return;
     };
 
-    auto tryHookLoop = [&](bool & valid) -> Goal::Co {
+    auto tryHookLoop = [&](bool & valid) -> asio::awaitable<void> {
         {
             PathLocks outputLocks;
             co_await acquireResources(valid, outputLocks);
@@ -526,11 +526,11 @@ Goal::Co DerivationBuildingGoal::tryToBuild(StorePathSet inputPaths)
                 /* Yes, it has started doing so.  Wait until we get
                    EOF from the hook. */
                 valid = true;
-                co_return buildWithHook(
+                co_return co_await buildWithHook(
                     std::move(inputPaths), std::move(initialOutputs), std::move(drvOptions), std::move(outputLocks));
             case rpDecline:
                 // We should do it ourselves.
-                co_return Return{};
+                co_return;
             case rpPostpone:
                 /* Not now; wait until at least one child finishes or
                    the wake-up timeout expires. */
@@ -566,7 +566,7 @@ Goal::Co DerivationBuildingGoal::tryToBuild(StorePathSet inputPaths)
                     continue;
                 case rpDecline:
                     // We should do it ourselves.
-                    co_return Return{};
+                    co_return;
                 }
 
                 break;
@@ -576,12 +576,12 @@ Goal::Co DerivationBuildingGoal::tryToBuild(StorePathSet inputPaths)
         if (valid) {
             co_return doneSuccess(BuildResult::Success::AlreadyValid, checkPathValidity(initialOutputs).second);
         } else {
-            co_return buildWithHook(
+            co_return co_await buildWithHook(
                 std::move(inputPaths), std::move(initialOutputs), std::move(drvOptions), std::move(outputLocks));
         }
     };
 
-    auto tryBuildLocally = [&](bool & valid) -> Goal::Co {
+    auto tryBuildLocally = [&](bool & valid) -> asio::awaitable<void> {
         if (auto * cap = std::get_if<LocalBuildCapability>(&localBuildResult)) {
             PathLocks outputLocks;
             co_await acquireResources(valid, outputLocks);
@@ -589,11 +589,11 @@ Goal::Co DerivationBuildingGoal::tryToBuild(StorePathSet inputPaths)
                 co_return doneSuccess(BuildResult::Success::AlreadyValid, checkPathValidity(initialOutputs).second);
 
             valid = true;
-            co_return buildLocally(
+            co_return co_await buildLocally(
                 *cap, std::move(inputPaths), std::move(initialOutputs), std::move(drvOptions), std::move(outputLocks));
         }
 
-        co_return Return{};
+        co_return;
     };
 
     if (buildMode != bmNormal) {
@@ -602,20 +602,20 @@ Goal::Co DerivationBuildingGoal::tryToBuild(StorePathSet inputPaths)
         bool valid = false;
         co_await tryBuildLocally(valid);
         if (valid)
-            co_return Return{};
+            co_return;
     } else if (drvOptions.preferLocalBuild) {
         // Local is preferred, so try it first. If it's not available, fall back to the hook.
         {
             bool valid = false;
             co_await tryBuildLocally(valid);
             if (valid)
-                co_return Return{};
+                co_return;
         }
         {
             bool valid = false;
             co_await tryHookLoop(valid);
             if (valid)
-                co_return Return{};
+                co_return;
         }
     } else {
         // Default preference is a remote build: they tend to be faster and preserve local
@@ -624,13 +624,13 @@ Goal::Co DerivationBuildingGoal::tryToBuild(StorePathSet inputPaths)
             bool valid = false;
             co_await tryHookLoop(valid);
             if (valid)
-                co_return Return{};
+                co_return;
         }
         {
             bool valid = false;
             co_await tryBuildLocally(valid);
             if (valid)
-                co_return Return{};
+                co_return;
         }
     }
 
@@ -640,20 +640,17 @@ Goal::Co DerivationBuildingGoal::tryToBuild(StorePathSet inputPaths)
     co_return doneFailure(reject(*rejection, storePath));
 }
 
-Goal::Co DerivationBuildingGoal::buildWithHook(
+asio::awaitable<void> DerivationBuildingGoal::buildWithHook(
     StorePathSet inputPaths,
     std::map<std::string, InitialOutput> initialOutputs,
     DerivationOptions<StorePath> drvOptions,
     PathLocks outputLocks)
 {
-#ifdef _WIN32 // TODO enable build hook on Windows
+/* FIXME: Restore */
+#if 1 // TODO enable build hook on Windows
     unreachable();
 #else
     std::unique_ptr<HookInstance> hook = std::move(worker.hook);
-
-    /* Set up callback so childTerminated is called if the hook is
-       destroyed (e.g., during failure cascades). */
-    hook->onKillChild = [this]() { worker.childTerminated(this, JobCategory::Build); };
 
     std::string machineName = [&hook]() {
         try {
@@ -857,16 +854,15 @@ Goal::Co DerivationBuildingGoal::buildWithHook(
 #endif
 }
 
-Goal::Co DerivationBuildingGoal::buildLocally(
+asio::awaitable<void> DerivationBuildingGoal::buildLocally(
     LocalBuildCapability localBuildCap,
     StorePathSet inputPaths,
     std::map<std::string, InitialOutput> initialOutputs,
     DerivationOptions<StorePath> drvOptions,
     PathLocks outputLocks)
 {
-    co_await yield();
-
-#ifdef _WIN32 // TODO enable `DerivationBuilder` on Windows
+/* FIXME: Restore */
+#if 1 // TODO enable `DerivationBuilder` on Windows
     throw UnimplementedError("building derivations is not yet implemented on Windows");
 #else
     std::unique_ptr<BuildLog> buildLog;
@@ -896,14 +892,14 @@ Goal::Co DerivationBuildingGoal::buildLocally(
     DerivationBuilderUnique builder;
     Descriptor builderOut;
 
+    auto slot = worker.buildSemaphore.asyncAcquire();
     // Will continue here while waiting for a build user below
     while (true) {
 
-        unsigned int curBuilds = worker.getNrLocalBuilds();
         if (curBuilds >= worker.settings.maxBuildJobs) {
             outputLocks.unlock();
             co_await waitForBuildSlot();
-            co_return tryToBuild(std::move(inputPaths));
+            co_return co_await tryToBuild(std::move(inputPaths));
         }
 
         if (!builder) {
@@ -1188,7 +1184,8 @@ BuildError DerivationBuildingGoal::fixupBuilderFailureErrorMessage(BuilderFailur
 
 HookReply DerivationBuildingGoal::tryBuildHook(const DerivationOptions<StorePath> & drvOptions)
 {
-#ifdef _WIN32 // TODO enable build hook on Windows
+/* FIXME: Restore */
+#if 1 // TODO enable build hook on Windows
     return rpDecline;
 #else
     /* This should use `worker.evalStore`, but per #13179 the build hook
@@ -1391,7 +1388,7 @@ DerivationBuildingGoal::checkPathValidity(std::map<std::string, InitialOutput> &
     return {allValid, validOutputs};
 }
 
-Goal::Done DerivationBuildingGoal::doneSuccess(BuildResult::Success::Status status, SingleDrvOutputs builtOutputs)
+void DerivationBuildingGoal::doneSuccess(BuildResult::Success::Status status, SingleDrvOutputs builtOutputs)
 {
     mcRunningBuilds.reset();
 
@@ -1407,7 +1404,7 @@ Goal::Done DerivationBuildingGoal::doneSuccess(BuildResult::Success::Status stat
         });
 }
 
-Goal::Done DerivationBuildingGoal::doneFailure(BuildError ex)
+void DerivationBuildingGoal::doneFailure(BuildError ex)
 {
     mcRunningBuilds.reset();
 

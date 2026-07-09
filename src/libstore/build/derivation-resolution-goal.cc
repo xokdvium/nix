@@ -22,7 +22,7 @@ std::string DerivationResolutionGoal::key()
     return "dc$" + std::string(drvPath.name()) + "$" + worker.store.printStorePath(drvPath);
 }
 
-Goal::Co DerivationResolutionGoal::resolveDerivation()
+asio::awaitable<void> DerivationResolutionGoal::resolveDerivation()
 {
     Goals waitees;
 

@@ -66,7 +66,7 @@ std::string DerivationTrampolineGoal::key()
     }.to_string(worker.store);
 }
 
-asio::awaitable<BuildResult> DerivationTrampolineGoal::run()
+asio::awaitable<void> DerivationTrampolineGoal::init()
 {
     trace("need to load derivation from file");
 
@@ -128,7 +128,7 @@ asio::awaitable<BuildResult> DerivationTrampolineGoal::run()
         assert(false);
     }();
 
-    co_return haveDerivation(std::move(drvPath), std::move(drv));
+    co_return co_await haveDerivation(std::move(drvPath), std::move(drv));
 }
 
 asio::awaitable<void> DerivationTrampolineGoal::haveDerivation(StorePath drvPath, Derivation drv)
