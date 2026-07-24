@@ -494,12 +494,30 @@ void DerivationT<StorePathSet>::checkInvariants(Store & store) const;
 template<>
 void DerivationT<FullInputs>::checkInvariants(Store & store) const;
 
+struct InfoForDerivation
+{
+    std::string suffix;
+    std::string contents;
+    StorePathSet references;
+    StorePath path;
+};
+
+/**
+ * Compute derivation contents, references and the resulting drvPath.
+ *
+ * This is a pure computation based on the derivation content and store directory.
+ */
+InfoForDerivation infoForDerivation(const StoreDirConfig & store, const Derivation & drv);
+
 /**
  * Compute the store path that would be used for a derivation without writing it.
  *
  * This is a pure computation based on the derivation content and store directory.
  */
-StorePath computeStorePath(const StoreDirConfig & store, const Derivation & drv);
+inline StorePath computeStorePath(const StoreDirConfig & store, const Derivation & drv)
+{
+    return infoForDerivation(store, drv).path;
+}
 
 /**
  * Read a derivation from a file.

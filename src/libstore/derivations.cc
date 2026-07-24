@@ -114,7 +114,7 @@ bool DerivationT<InputsType>::isBuiltin() const
 template<>
 std::string DerivationT<FullInputs>::unparse(const StoreDirConfig & store) const;
 
-static auto infoForDerivation(const StoreDirConfig & store, const Derivation & drv)
+InfoForDerivation infoForDerivation(const StoreDirConfig & store, const Derivation & drv)
 {
     auto references = drv.inputs.srcs;
     for (auto & i : drv.inputs.drvs.map)
@@ -126,18 +126,14 @@ static auto infoForDerivation(const StoreDirConfig & store, const Derivation & d
     auto contents = drv.unparse(store);
     auto hash = hashString(HashAlgorithm::SHA256, contents);
     auto ca = TextInfo{.hash = hash, .references = references};
-    return std::tuple{
-        suffix,
-        contents,
-        references,
-        store.makeFixedOutputPathFromCA(suffix, ca),
-    };
-}
+    auto path = store.makeFixedOutputPathFromCA(suffix, ca);
 
-StorePath computeStorePath(const StoreDirConfig & store, const Derivation & drv)
-{
-    auto [_suffix, _contents, _references, path] = infoForDerivation(store, drv);
-    return path;
+    return {
+        std::move(suffix),
+        std::move(contents),
+        std::move(references),
+        std::move(path),
+    };
 }
 
 StorePath Store::writeDerivation(const Derivation & drv, RepairFlag repair)
