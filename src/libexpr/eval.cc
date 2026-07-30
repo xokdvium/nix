@@ -236,7 +236,7 @@ EvalMemory::EvalMemory()
 
 EvalState::EvalState(
     const LookupPath & lookupPathFromArguments,
-    ref<Store> store,
+    ref<Store> store_,
     const fetchers::Settings & fetchSettings,
     const EvalSettings & settings,
     std::shared_ptr<Store> buildStore)
@@ -244,6 +244,7 @@ EvalState::EvalState(
     , settings{settings}
     , symbols(StaticEvalSymbols::staticSymbolTable())
     , repair(NoRepair)
+    , store(WritebackStore::make(store_))
     , storeFS(makeMountedSourceAccessor({
           {CanonPath::root, makeEmptySourceAccessor()},
           /* In the pure eval case, we can simply require
@@ -304,8 +305,7 @@ EvalState::EvalState(
           {
 #embed "imported-drv-to-derivation.nix"
           })}
-    , store(store)
-    , buildStore(buildStore ? buildStore : store)
+    , buildStore(buildStore ? buildStore : store.get_ptr())
     , inputCache(fetchers::InputCache::create())
     , debugRepl(nullptr)
     , debugStop(false)

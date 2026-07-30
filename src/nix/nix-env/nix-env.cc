@@ -758,7 +758,7 @@ static void opSetFlag(Globals & globals, Strings opFlags, Strings opArgs)
 
 static void opSet(Globals & globals, Strings opFlags, Strings opArgs)
 {
-    auto store2 = globals.state->store.dynamic_pointer_cast<LocalFSStore>();
+    auto store2 = globals.state->store->getInnerStore().dynamic_pointer_cast<LocalFSStore>();
     if (!store2)
         throw Error("--set is not supported for this Nix store");
 

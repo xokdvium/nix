@@ -168,6 +168,7 @@ sources = files(
   'value-to-xml.cc',
   'value.cc',
   'value/context.cc',
+  'writeback-store.cc',
 )
 
 subdir('include/nix/expr')

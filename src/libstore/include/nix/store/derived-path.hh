@@ -120,6 +120,8 @@ struct SingleDerivedPath : _SingleDerivedPathRaw
      * referring to that store object. In other words, this means this
      * function breaks "referential transparency". It should therefore
      * be used only with great care.
+     *
+     * @todo Make non-recursive.
      */
     const StorePath & getBaseStorePath() const;
 

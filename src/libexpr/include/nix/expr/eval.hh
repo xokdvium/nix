@@ -17,6 +17,7 @@
 #include "nix/expr/repl-exit-status.hh"
 #include "nix/util/ref.hh"
 #include "nix/expr/counter.hh"
+#include "nix/expr/writeback-store.hh"
 
 // For `NIX_USE_BOEHMGC`, and if that's set, `GC_THREADS`
 #include "nix/expr/config.hh"
@@ -377,6 +378,11 @@ public:
     RepairFlag repair;
 
     /**
+     * Store used to materialise .drv files.
+     */
+    const ref<WritebackStore> store;
+
+    /**
      * The accessor corresponding to `store`.
      */
     const ref<MountedSourceAccessor> storeFS;
@@ -399,11 +405,6 @@ public:
 
     const SourcePath derivationInternal;
     const SourcePath importedDrvToDerivation;
-
-    /**
-     * Store used to materialise .drv files.
-     */
-    const ref<Store> store;
 
     /**
      * Store used to build stuff.

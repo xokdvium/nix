@@ -158,7 +158,7 @@ bool createUserEnv(
     state.store->getBuilder()->buildPaths(toDerivedPaths(topLevelDrvs), state.repair ? bmRepair : bmNormal);
 
     /* Switch the current user environment to the output path. */
-    auto store2 = state.store.dynamic_pointer_cast<LocalFSStore>();
+    auto store2 = state.store->getInnerStore().dynamic_pointer_cast<LocalFSStore>();
 
     if (store2) {
         PathLocks lock;

@@ -129,7 +129,7 @@ StringMap EvalState::realiseContext(const NixStringContext & context, StorePathS
     buildReqs.reserve(drvs.size());
     for (auto & d : drvs)
         buildReqs.emplace_back(DerivedPath{d});
-    buildStore->getBuilder(store)->buildPaths(buildReqs, bmNormal);
+    buildStore->getBuilder(store.get_ptr())->buildPaths(buildReqs, bmNormal);
 
     StorePathSet outputsToCopyAndAllow;
 
@@ -154,7 +154,7 @@ StringMap EvalState::realiseContext(const NixStringContext & context, StorePathS
         }
     }
 
-    if (store != buildStore)
+    if (store.get_ptr() != buildStore.get_ptr())
         copyClosure(*buildStore, *store, outputsToCopyAndAllow);
 
     if (isIFD) {

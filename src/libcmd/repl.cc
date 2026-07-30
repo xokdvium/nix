@@ -558,7 +558,7 @@ ProcessLineResult NixRepl::processLine(std::string line)
             auto drv = state->store->readDerivation(drvPath);
             logger->cout("\nThis derivation produced the following outputs:");
             for (auto & [outputName, outputPath] : deepQueryDerivationOutputMap(*state->store, drvPath)) {
-                auto localStore = state->store.dynamic_pointer_cast<LocalFSStore>();
+                auto localStore = state->store->getInnerStore().dynamic_pointer_cast<LocalFSStore>();
                 if (localStore && command == ":bl") {
                     std::string symlink = "repl-result-" + outputName;
                     localStore->addPermRoot(outputPath, absPath(symlink));

@@ -87,7 +87,7 @@ void processExpr(
                     auto rootName = absPath(gcRoot);
                     if (++rootNr > 1)
                         rootName += "-" + std::to_string(rootNr);
-                    auto store2 = state.store.dynamic_pointer_cast<LocalFSStore>();
+                    auto store2 = state.store->getInnerStore().dynamic_pointer_cast<LocalFSStore>();
                     if (store2)
                         drvPathS = store2->addPermRoot(drvPath, rootName).string();
                 }

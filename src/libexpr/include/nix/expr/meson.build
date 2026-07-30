@@ -39,4 +39,5 @@ headers = [ config_pub_h ] + files(
   'value-to-xml.hh',
   'value.hh',
   'value/context.hh',
+  'writeback-store.hh',
 )
