@@ -106,13 +106,13 @@ scope: {
       pkgs.libgit2
     else
       # Grab newer libgit2.
-      pkgs.libgit2.overrideAttrs rec {
-        version = "1.9.4";
+      pkgs.libgit2.overrideAttrs {
+        version = "2.0.0-rc.1";
         src = pkgs.fetchFromGitHub {
-          owner = "libgit2";
+          owner = "xokdvium";
           repo = "libgit2";
-          tag = "v${version}";
-          hash = "sha256-ZKUiz3pdFE2SKxh53X2oyr7hs32Njj5YVA0OXDXz7h0=";
+          rev = "f65f2752cf6748bb6569db705d722d4f08a11c56";
+          hash = "sha256-fUYWgJYn4I3Ruc894lnBfAF6+hxGolmnD511FJT/lU0=";
         };
       };
 
